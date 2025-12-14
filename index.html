@@ -1,0 +1,458 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Sphere Big Bang</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+      font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+    }
+
+    body {
+      margin: 0;
+      display: grid;
+      grid-template-rows: auto 1fr;
+      min-height: 100vh;
+      background: radial-gradient(circle at 25% 20%, rgba(255, 255, 255, 0.08), transparent 40%),
+        radial-gradient(circle at 80% 70%, rgba(255, 255, 255, 0.12), transparent 45%),
+        #05070b;
+      color: #e8ecf0;
+    }
+
+    header {
+      padding: 12px 16px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      align-items: center;
+      background: rgba(0, 0, 0, 0.35);
+      backdrop-filter: blur(6px);
+      border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
+    }
+
+    header label {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 14px;
+      font-weight: 600;
+      color: #e1e5ea;
+    }
+
+    header input {
+      width: 76px;
+      padding: 6px 8px;
+      border-radius: 8px;
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      background: rgba(255, 255, 255, 0.05);
+      color: inherit;
+    }
+
+    header button {
+      padding: 8px 14px;
+      border: none;
+      border-radius: 10px;
+      background: linear-gradient(145deg, #68b6ff, #9ad7ff);
+      color: #07111c;
+      font-weight: 700;
+      letter-spacing: 0.02em;
+      cursor: pointer;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+      transition: transform 120ms ease, box-shadow 120ms ease;
+    }
+
+    header button.secondary {
+      background: linear-gradient(145deg, #f2f5f9, #dce3ec);
+      color: #06101b;
+    }
+
+    header button:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 6px 15px rgba(0, 0, 0, 0.45);
+    }
+
+    #canvas-container {
+      position: relative;
+    }
+
+    canvas {
+      display: block;
+      width: 100%;
+      height: 100%;
+    }
+
+    .annotation {
+      position: absolute;
+      bottom: 16px;
+      left: 16px;
+      font-size: 13px;
+      color: rgba(232, 236, 240, 0.78);
+    }
+
+    .stats {
+      position: absolute;
+      top: 16px;
+      right: 16px;
+      padding: 12px 14px;
+      border-radius: 12px;
+      background: rgba(0, 0, 0, 0.42);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      backdrop-filter: blur(6px);
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+      min-width: 260px;
+    }
+
+    .stats h3 {
+      margin: 0 0 8px;
+      font-size: 14px;
+      letter-spacing: 0.02em;
+      color: #f5f8fb;
+    }
+
+    .stats dl {
+      display: grid;
+      grid-template-columns: auto auto;
+      gap: 6px 10px;
+      margin: 0;
+    }
+
+    .stats dt {
+      font-weight: 700;
+      color: #d8dde5;
+    }
+
+    .stats dd {
+      margin: 0;
+      text-align: right;
+      color: #c7d0da;
+      font-variant-numeric: tabular-nums;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <label>
+      Particles
+      <input type="number" id="count" min="3" max="200" value="30" />
+    </label>
+    <label>
+      Gravity (G)
+      <input type="number" id="gravity" step="0.001" min="0.0001" value="0.01" />
+    </label>
+    <label>
+      Explosion speed
+      <input type="number" id="speed" step="0.1" min="0" value="3" />
+    </label>
+    <label>
+      Time scale
+      <input type="number" id="timescale" step="0.1" min="0.1" value="1" />
+    </label>
+    <button id="restart">Restart</button>
+    <button id="pause" class="secondary">Pause</button>
+  </header>
+
+  <div id="canvas-container">
+    <canvas id="sim"></canvas>
+    <div class="stats" aria-live="polite">
+      <h3>Stats (avg / min / max)</h3>
+      <dl>
+        <dt>Speed</dt>
+        <dd id="speed-stats">0 / 0 / 0</dd>
+        <dt>Acceleration</dt>
+        <dd id="accel-stats">0 / 0 / 0</dd>
+        <dt>Mass</dt>
+        <dd id="mass-stats">0 / 0 / 0</dd>
+      </dl>
+    </div>
+    <div class="annotation">Drag this file into a browser tab to run locally.</div>
+  </div>
+
+  <script>
+    const canvas = document.getElementById("sim");
+    const ctx = canvas.getContext("2d");
+
+    const controls = {
+      count: document.getElementById("count"),
+      gravity: document.getElementById("gravity"),
+      speed: document.getElementById("speed"),
+      timescale: document.getElementById("timescale"),
+      restart: document.getElementById("restart"),
+      pause: document.getElementById("pause"),
+      speedStats: document.getElementById("speed-stats"),
+      accelStats: document.getElementById("accel-stats"),
+      massStats: document.getElementById("mass-stats"),
+    };
+
+    const state = {
+      particles: [],
+      radius: 0,
+      center: { x: 0, y: 0 },
+      running: true,
+      lastTime: 0,
+      cameraDistance: 0,
+    };
+
+    function resize() {
+      canvas.width = window.innerWidth;
+      canvas.height = window.innerHeight - document.querySelector("header").offsetHeight;
+      state.center = { x: canvas.width / 2, y: canvas.height / 2 };
+      state.radius = Math.min(canvas.width, canvas.height) * 0.32;
+      state.cameraDistance = state.radius * 3.4;
+    }
+
+    window.addEventListener("resize", resize);
+    resize();
+
+    function clamp(v, min, max) {
+      return Math.max(min, Math.min(max, v));
+    }
+
+    function normalize(v) {
+      const len = Math.hypot(v.x, v.y, v.z);
+      if (!len) return { x: 0, y: 0, z: 0 };
+      return { x: v.x / len, y: v.y / len, z: v.z / len };
+    }
+
+    function subtract(a, b) {
+      return { x: a.x - b.x, y: a.y - b.y, z: a.z - b.z };
+    }
+
+    function add(a, b) {
+      return { x: a.x + b.x, y: a.y + b.y, z: a.z + b.z };
+    }
+
+    function scale(v, s) {
+      return { x: v.x * s, y: v.y * s, z: v.z * s };
+    }
+
+    function dot(a, b) {
+      return a.x * b.x + a.y * b.y + a.z * b.z;
+    }
+
+    function length(v) {
+      return Math.hypot(v.x, v.y, v.z);
+    }
+
+    function project(point) {
+      const zc = state.cameraDistance - point.z;
+      const perspective = state.cameraDistance / zc;
+      return {
+        x: state.center.x + point.x * perspective,
+        y: state.center.y - point.y * perspective,
+        scale: perspective,
+        depth: point.z,
+      };
+    }
+
+    function randomTangent(normal) {
+      const n = normalize(normal);
+      // Pick any vector not parallel to n
+      let rand = normalize({
+        x: Math.random() * 2 - 1,
+        y: Math.random() * 2 - 1,
+        z: Math.random() * 2 - 1,
+      });
+      if (Math.abs(dot(rand, n)) > 0.95) {
+        rand = { x: rand.y, y: rand.z, z: rand.x };
+      }
+      const projected = subtract(rand, scale(n, dot(rand, n)));
+      return normalize(projected);
+    }
+
+    function spawnParticles() {
+      const count = Number(controls.count.value) || 10;
+      const explosionSpeed = Number(controls.speed.value) || 1;
+      const seedPoint = { x: 0, y: state.radius, z: 0 };
+
+      state.particles = new Array(count).fill(null).map(() => {
+        const jitter = randomTangent(seedPoint);
+        const offset = scale(jitter, Math.random() * (state.radius * 0.004));
+        const pos = add(seedPoint, offset);
+        const tangentDir = randomTangent(pos);
+        const speed = (0.5 + Math.random()) * explosionSpeed;
+        return {
+          pos: pos,
+          vel: scale(tangentDir, speed),
+          acc: { x: 0, y: 0, z: 0 },
+          mass: 0.5 + Math.random() * 2.5,
+          color: `hsl(${Math.random() * 360}, 80%, 65%)`,
+        };
+      });
+    }
+
+    function computeAccelerations() {
+      const G = Number(controls.gravity.value) || 0.01;
+      const R = state.radius;
+      const particles = state.particles;
+
+      for (const p of particles) {
+        p.acc = { x: 0, y: 0, z: 0 };
+      }
+
+      for (let i = 0; i < particles.length; i++) {
+        for (let j = i + 1; j < particles.length; j++) {
+          const a = particles[i];
+          const b = particles[j];
+          const u = normalize(a.pos);
+          const v = normalize(b.pos);
+
+          const cosGamma = clamp(dot(u, v), -1, 1);
+          const gamma = Math.acos(cosGamma);
+          if (gamma < 1e-6) continue;
+
+          const arcDistance = Math.max(gamma * R, 0.001);
+          const force = (G * a.mass * b.mass) / (arcDistance * arcDistance);
+
+          const tangentA = normalize(subtract(v, scale(u, cosGamma)));
+          const tangentB = normalize(subtract(u, scale(v, cosGamma)));
+
+          const accelA = scale(tangentA, force / a.mass);
+          const accelB = scale(tangentB, force / b.mass);
+
+          a.acc = add(a.acc, accelA);
+          b.acc = add(b.acc, accelB);
+        }
+      }
+    }
+
+    function step(dt) {
+      computeAccelerations();
+
+      for (const p of state.particles) {
+        p.vel = add(p.vel, scale(p.acc, dt));
+        p.pos = add(p.pos, scale(p.vel, dt));
+
+        const normal = normalize(p.pos);
+        p.pos = scale(normal, state.radius);
+
+        // Remove any radial velocity component to keep motion on the surface
+        const radialComponent = dot(p.vel, normal);
+        p.vel = subtract(p.vel, scale(normal, radialComponent));
+      }
+    }
+
+    function summarize(values) {
+      const min = Math.min(...values);
+      const max = Math.max(...values);
+      const avg = values.reduce((sum, v) => sum + v, 0) / values.length;
+      return { min, max, avg };
+    }
+
+    function updateStats() {
+      if (!state.particles.length) return;
+
+      const speedVals = state.particles.map((p) => length(p.vel));
+      const accelVals = state.particles.map((p) => length(p.acc));
+      const massVals = state.particles.map((p) => p.mass);
+
+      const speed = summarize(speedVals);
+      const accel = summarize(accelVals);
+      const mass = summarize(massVals);
+
+      controls.speedStats.textContent = `${speed.avg.toFixed(3)} / ${speed.min.toFixed(3)} / ${speed.max.toFixed(3)}`;
+      controls.accelStats.textContent = `${accel.avg.toFixed(3)} / ${accel.min.toFixed(3)} / ${accel.max.toFixed(3)}`;
+      controls.massStats.textContent = `${mass.avg.toFixed(3)} / ${mass.min.toFixed(3)} / ${mass.max.toFixed(3)}`;
+    }
+
+    function drawSphereGuide() {
+      const gradient = ctx.createRadialGradient(
+        state.center.x - state.radius * 0.35,
+        state.center.y - state.radius * 0.25,
+        state.radius * 0.15,
+        state.center.x,
+        state.center.y,
+        state.radius * 1.1
+      );
+      gradient.addColorStop(0, "rgba(120, 190, 255, 0.35)");
+      gradient.addColorStop(1, "rgba(50, 80, 110, 0.05)");
+
+      ctx.save();
+      ctx.translate(state.center.x, state.center.y);
+      ctx.fillStyle = gradient;
+      ctx.beginPath();
+      ctx.arc(0, 0, state.radius, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.strokeStyle = "rgba(255, 255, 255, 0.12)";
+      ctx.lineWidth = 1;
+
+      // Equator
+      ctx.beginPath();
+      ctx.ellipse(0, 0, state.radius, state.radius * 0.35, 0, 0, Math.PI * 2);
+      ctx.stroke();
+
+      // Meridians
+      for (let i = 0; i < 3; i++) {
+        const angle = (i + 1) * (Math.PI / 4);
+        ctx.beginPath();
+        ctx.ellipse(
+          0,
+          0,
+          Math.abs(state.radius * Math.cos(angle)),
+          state.radius,
+          0,
+          0,
+          Math.PI * 2
+        );
+        ctx.stroke();
+      }
+
+      ctx.restore();
+    }
+
+    function drawParticles() {
+      for (const p of state.particles) {
+        const projected = project(p.pos);
+        const size = 6 * projected.scale;
+        const depthShade = clamp((p.pos.z / state.radius + 1) / 2, 0, 1);
+
+        ctx.beginPath();
+        ctx.fillStyle = p.color;
+        ctx.shadowColor = p.color;
+        ctx.shadowBlur = 10 * projected.scale;
+        ctx.globalAlpha = 0.65 + depthShade * 0.35;
+        ctx.arc(projected.x, projected.y, size, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.globalAlpha = 1;
+      }
+    }
+
+    function draw() {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      drawSphereGuide();
+      drawParticles();
+    }
+
+    function loop(timestamp) {
+      if (!state.lastTime) state.lastTime = timestamp;
+      const dt = ((timestamp - state.lastTime) / 1000) * (Number(controls.timescale.value) || 1);
+      state.lastTime = timestamp;
+
+      if (state.running) {
+        step(dt);
+        draw();
+        updateStats();
+      }
+
+      requestAnimationFrame(loop);
+    }
+
+    controls.restart.addEventListener("click", () => {
+      spawnParticles();
+      state.lastTime = 0;
+    });
+
+    controls.pause.addEventListener("click", () => {
+      state.running = !state.running;
+      controls.pause.textContent = state.running ? "Pause" : "Resume";
+      state.lastTime = 0;
+    });
+
+    spawnParticles();
+    requestAnimationFrame(loop);
+  </script>
+</body>
+</html>
