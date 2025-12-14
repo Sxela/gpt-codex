@@ -150,6 +150,26 @@
       Time scale
       <input type="number" id="timescale" step="0.1" min="0.1" value="1" />
     </label>
+    <label>
+      Mass μ / σ
+      <input type="number" id="mass-mean" step="0.1" min="0.01" value="1.75" />
+      <input type="number" id="mass-std" step="0.1" min="0" value="0.6" />
+    </label>
+    <label>
+      Speed μ / σ
+      <input type="number" id="speed-mean" step="0.05" min="0" value="1" />
+      <input type="number" id="speed-std" step="0.05" min="0" value="0.35" />
+    </label>
+    <label>
+      Direction μ° / σ°
+      <input type="number" id="dir-mean" step="5" min="0" max="360" value="0" />
+      <input type="number" id="dir-std" step="5" min="0" max="360" value="360" />
+    </label>
+    <label>
+      Jitter μ / σ (%R)
+      <input type="number" id="jitter-mean" step="0.05" value="0" />
+      <input type="number" id="jitter-std" step="0.05" value="0.4" />
+    </label>
     <button id="restart">Restart</button>
     <button id="pause" class="secondary">Pause</button>
   </header>
@@ -179,6 +199,14 @@
       gravity: document.getElementById("gravity"),
       speed: document.getElementById("speed"),
       timescale: document.getElementById("timescale"),
+      massMean: document.getElementById("mass-mean"),
+      massStd: document.getElementById("mass-std"),
+      speedMean: document.getElementById("speed-mean"),
+      speedStd: document.getElementById("speed-std"),
+      dirMean: document.getElementById("dir-mean"),
+      dirStd: document.getElementById("dir-std"),
+      jitterMean: document.getElementById("jitter-mean"),
+      jitterStd: document.getElementById("jitter-std"),
       restart: document.getElementById("restart"),
       pause: document.getElementById("pause"),
       speedStats: document.getElementById("speed-stats"),
@@ -232,6 +260,14 @@
       return a.x * b.x + a.y * b.y + a.z * b.z;
     }
 
+    function cross(a, b) {
+      return {
+        x: a.y * b.z - a.z * b.y,
+        y: a.z * b.x - a.x * b.z,
+        z: a.x * b.y - a.y * b.x,
+      };
+    }
+
     function length(v) {
       return Math.hypot(v.x, v.y, v.z);
     }
@@ -262,22 +298,49 @@
       return normalize(projected);
     }
 
+    function randomNormal(mean, std) {
+      let u = 0;
+      let v = 0;
+      while (u === 0) u = Math.random();
+      while (v === 0) v = Math.random();
+      const mag = Math.sqrt(-2.0 * Math.log(u)) * Math.cos(2.0 * Math.PI * v);
+      return mean + mag * std;
+    }
+
     function spawnParticles() {
       const count = Number(controls.count.value) || 10;
       const explosionSpeed = Number(controls.speed.value) || 1;
+      const massMean = Number(controls.massMean.value) || 1.75;
+      const massStd = Number(controls.massStd.value) || 0.6;
+      const speedMean = Number(controls.speedMean.value) || 1;
+      const speedStd = Number(controls.speedStd.value) || 0.35;
+      const dirMean = Number(controls.dirMean.value) || 0;
+      const dirStd = Number(controls.dirStd.value) || 360;
+      const jitterMean = Number(controls.jitterMean.value) || 0;
+      const jitterStd = Number(controls.jitterStd.value) || 0.4;
       const seedPoint = { x: 0, y: state.radius, z: 0 };
 
       state.particles = new Array(count).fill(null).map(() => {
-        const jitter = randomTangent(seedPoint);
-        const offset = scale(jitter, Math.random() * (state.radius * 0.004));
+        const jitterDir = randomTangent(seedPoint);
+        const jitterPct = Math.abs(randomNormal(jitterMean, jitterStd));
+        const offset = scale(jitterDir, clamp((jitterPct / 100) * state.radius, 0, state.radius * 0.2));
         const pos = add(seedPoint, offset);
-        const tangentDir = randomTangent(pos);
-        const speed = (0.5 + Math.random()) * explosionSpeed;
+
+        const normal = normalize(pos);
+        const fallback = Math.abs(normal.x) < 0.9 ? { x: 1, y: 0, z: 0 } : { x: 0, y: 1, z: 0 };
+        const tangentA = normalize(subtract(fallback, scale(normal, dot(fallback, normal))));
+        const tangentB = normalize(cross(normal, tangentA));
+        const dirDeg = dirStd >= 360 ? Math.random() * 360 : randomNormal(dirMean, dirStd);
+        const dirRad = (dirDeg * Math.PI) / 180;
+        const tangentDir = normalize(
+          add(scale(tangentA, Math.cos(dirRad)), scale(tangentB, Math.sin(dirRad)))
+        );
+        const speed = Math.max(0, randomNormal(speedMean, speedStd)) * explosionSpeed;
         return {
           pos: pos,
           vel: scale(tangentDir, speed),
           acc: { x: 0, y: 0, z: 0 },
-          mass: 0.5 + Math.random() * 2.5,
+          mass: Math.max(0.05, randomNormal(massMean, massStd)),
           color: `hsl(${Math.random() * 360}, 80%, 65%)`,
         };
       });
