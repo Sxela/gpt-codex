@@ -6,6 +6,7 @@
    - Double-click `index.html`, or
    - Drag the file onto an open browser tab.
 3. Use the controls at the top to set particle count, gravity, explosion speed, and time scale.
-4. Press **Restart** to relaunch from the center or **Pause/Resume** to toggle animation.
+4. Watch the live stats panel for average/min/max speed, acceleration, and mass across all particles.
+5. Press **Restart** to relaunch from the center or **Pause/Resume** to toggle animation.
 
 No build steps or server are required; everything runs locally in the browser.

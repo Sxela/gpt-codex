@@ -90,6 +90,45 @@
       font-size: 13px;
       color: rgba(232, 236, 240, 0.75);
     }
+
+    .stats {
+      position: absolute;
+      top: 16px;
+      right: 16px;
+      padding: 12px 14px;
+      border-radius: 12px;
+      background: rgba(0, 0, 0, 0.4);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      backdrop-filter: blur(6px);
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+      min-width: 240px;
+    }
+
+    .stats h3 {
+      margin: 0 0 8px;
+      font-size: 14px;
+      letter-spacing: 0.02em;
+      color: #f5f8fb;
+    }
+
+    .stats dl {
+      display: grid;
+      grid-template-columns: auto auto;
+      gap: 6px 10px;
+      margin: 0;
+    }
+
+    .stats dt {
+      font-weight: 700;
+      color: #d8dde5;
+    }
+
+    .stats dd {
+      margin: 0;
+      text-align: right;
+      color: #c7d0da;
+      font-variant-numeric: tabular-nums;
+    }
   </style>
 </head>
 <body>
@@ -116,6 +155,17 @@
 
   <div id="canvas-container">
     <canvas id="sim"></canvas>
+    <div class="stats" aria-live="polite">
+      <h3>Stats (avg / min / max)</h3>
+      <dl>
+        <dt>Speed</dt>
+        <dd id="speed-stats">0 / 0 / 0</dd>
+        <dt>Acceleration</dt>
+        <dd id="accel-stats">0 / 0 / 0</dd>
+        <dt>Mass</dt>
+        <dd id="mass-stats">0 / 0 / 0</dd>
+      </dl>
+    </div>
     <div class="annotation">Drag this file into a browser tab to run locally.</div>
   </div>
 
@@ -130,6 +180,9 @@
       timescale: document.getElementById("timescale"),
       restart: document.getElementById("restart"),
       pause: document.getElementById("pause"),
+      speedStats: document.getElementById("speed-stats"),
+      accelStats: document.getElementById("accel-stats"),
+      massStats: document.getElementById("mass-stats"),
     };
 
     const state = {
@@ -162,6 +215,7 @@
       state.particles = new Array(count).fill(null).map(() => ({
         theta: -Math.PI / 2 + (Math.random() - 0.5) * 0.004,
         omega: (Math.random() - 0.5) * explosionSpeed,
+        mass: 0.5 + Math.random() * 2.5,
         color: `hsl(${Math.random() * 360}, 80%, 65%)`,
       }));
     }
@@ -181,11 +235,11 @@
           const b = particles[j];
           const delta = wrapAngle(b.theta - a.theta);
           const distance = Math.max(Math.abs(delta) * R, 0.001);
-          const force = G / (distance * distance);
-          const tangentialAccel = force * Math.sign(delta);
-          const alpha = tangentialAccel / R;
-          a.alpha += alpha;
-          b.alpha -= alpha;
+          const force = (G * a.mass * b.mass) / (distance * distance);
+          const tangentialAccelA = (force / a.mass) * Math.sign(delta);
+          const tangentialAccelB = (force / b.mass) * Math.sign(delta) * -1;
+          a.alpha += tangentialAccelA / R;
+          b.alpha += tangentialAccelB / R;
         }
       }
     }
@@ -198,6 +252,29 @@
         p.omega += p.alpha * dt;
         p.theta = wrapAngle(p.theta + p.omega * dt);
       }
+    }
+
+    function summarize(values) {
+      const min = Math.min(...values);
+      const max = Math.max(...values);
+      const avg = values.reduce((sum, v) => sum + v, 0) / values.length;
+      return { min, max, avg };
+    }
+
+    function updateStats() {
+      if (!state.particles.length) return;
+
+      const speedVals = state.particles.map((p) => Math.abs(p.omega * state.radius));
+      const accelVals = state.particles.map((p) => Math.abs((p.alpha ?? 0) * state.radius));
+      const massVals = state.particles.map((p) => p.mass);
+
+      const speed = summarize(speedVals);
+      const accel = summarize(accelVals);
+      const mass = summarize(massVals);
+
+      controls.speedStats.textContent = `${speed.avg.toFixed(3)} / ${speed.min.toFixed(3)} / ${speed.max.toFixed(3)}`;
+      controls.accelStats.textContent = `${accel.avg.toFixed(3)} / ${accel.min.toFixed(3)} / ${accel.max.toFixed(3)}`;
+      controls.massStats.textContent = `${mass.avg.toFixed(3)} / ${mass.min.toFixed(3)} / ${mass.max.toFixed(3)}`;
     }
 
     function draw() {
@@ -235,6 +312,7 @@
       if (state.running) {
         step(dt);
         draw();
+        updateStats();
       }
 
       requestAnimationFrame(loop);
