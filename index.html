@@ -1,0 +1,349 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Circle Big Bang</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+      font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+    }
+
+    body {
+      margin: 0;
+      display: grid;
+      grid-template-rows: auto 1fr;
+      min-height: 100vh;
+      background: radial-gradient(circle at 20% 20%, rgba(255, 255, 255, 0.08), transparent 35%),
+        radial-gradient(circle at 80% 60%, rgba(255, 255, 255, 0.1), transparent 40%),
+        #0a0c10;
+      color: #e8ecf0;
+    }
+
+    header {
+      padding: 12px 16px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      align-items: center;
+      background: rgba(0, 0, 0, 0.35);
+      backdrop-filter: blur(6px);
+      border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
+    }
+
+    header label {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 14px;
+      font-weight: 600;
+      color: #e1e5ea;
+    }
+
+    header input {
+      width: 72px;
+      padding: 6px 8px;
+      border-radius: 8px;
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      background: rgba(255, 255, 255, 0.05);
+      color: inherit;
+    }
+
+    header button {
+      padding: 8px 14px;
+      border: none;
+      border-radius: 10px;
+      background: linear-gradient(145deg, #4f9bff, #7ac7ff);
+      color: #07111c;
+      font-weight: 700;
+      letter-spacing: 0.02em;
+      cursor: pointer;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+      transition: transform 120ms ease, box-shadow 120ms ease;
+    }
+
+    header button.secondary {
+      background: linear-gradient(145deg, #f2f5f9, #dce3ec);
+    }
+
+    header button:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 6px 15px rgba(0, 0, 0, 0.45);
+    }
+
+    #canvas-container {
+      position: relative;
+    }
+
+    canvas {
+      display: block;
+      width: 100%;
+      height: 100%;
+    }
+
+    .annotation {
+      position: absolute;
+      bottom: 16px;
+      left: 16px;
+      font-size: 13px;
+      color: rgba(232, 236, 240, 0.75);
+    }
+
+    .stats {
+      position: absolute;
+      top: 16px;
+      right: 16px;
+      padding: 12px 14px;
+      border-radius: 12px;
+      background: rgba(0, 0, 0, 0.4);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      backdrop-filter: blur(6px);
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+      min-width: 240px;
+    }
+
+    .stats h3 {
+      margin: 0 0 8px;
+      font-size: 14px;
+      letter-spacing: 0.02em;
+      color: #f5f8fb;
+    }
+
+    .stats dl {
+      display: grid;
+      grid-template-columns: auto auto;
+      gap: 6px 10px;
+      margin: 0;
+    }
+
+    .stats dt {
+      font-weight: 700;
+      color: #d8dde5;
+    }
+
+    .stats dd {
+      margin: 0;
+      text-align: right;
+      color: #c7d0da;
+      font-variant-numeric: tabular-nums;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <label>
+      Particles
+      <input type="number" id="count" min="3" max="200" value="20" />
+    </label>
+    <label>
+      Gravity (G)
+      <input type="number" id="gravity" step="0.001" min="0.0001" value="0.01" />
+    </label>
+    <label>
+      Explosion speed
+      <input type="number" id="speed" step="0.1" min="0" value="2.5" />
+    </label>
+    <label>
+      Time scale
+      <input type="number" id="timescale" step="0.1" min="0.1" value="1" />
+    </label>
+    <button id="restart">Restart</button>
+    <button id="pause" class="secondary">Pause</button>
+  </header>
+
+  <div id="canvas-container">
+    <canvas id="sim"></canvas>
+    <div class="stats" aria-live="polite">
+      <h3>Stats (avg / min / max)</h3>
+      <dl>
+        <dt>Speed</dt>
+        <dd id="speed-stats">0 / 0 / 0</dd>
+        <dt>Acceleration</dt>
+        <dd id="accel-stats">0 / 0 / 0</dd>
+        <dt>Mass</dt>
+        <dd id="mass-stats">0 / 0 / 0</dd>
+      </dl>
+    </div>
+    <div class="annotation">Drag this file into a browser tab to run locally.</div>
+  </div>
+
+  <script>
+    const canvas = document.getElementById("sim");
+    const ctx = canvas.getContext("2d");
+
+    const controls = {
+      count: document.getElementById("count"),
+      gravity: document.getElementById("gravity"),
+      speed: document.getElementById("speed"),
+      timescale: document.getElementById("timescale"),
+      restart: document.getElementById("restart"),
+      pause: document.getElementById("pause"),
+      speedStats: document.getElementById("speed-stats"),
+      accelStats: document.getElementById("accel-stats"),
+      massStats: document.getElementById("mass-stats"),
+    };
+
+    const state = {
+      particles: [],
+      radius: 0,
+      center: { x: 0, y: 0 },
+      running: true,
+      lastTime: 0,
+    };
+
+    function resize() {
+      canvas.width = window.innerWidth;
+      canvas.height = window.innerHeight - document.querySelector("header").offsetHeight;
+      state.center = { x: canvas.width / 2, y: canvas.height / 2 };
+      state.radius = Math.min(canvas.width, canvas.height) * 0.38;
+    }
+
+    window.addEventListener("resize", resize);
+    resize();
+
+    function wrapAngle(angle) {
+      const twoPi = Math.PI * 2;
+      angle = ((angle % twoPi) + twoPi) % twoPi;
+      return angle > Math.PI ? angle - twoPi : angle;
+    }
+
+    function angularSeparation(thetaA, thetaB) {
+      const twoPi = Math.PI * 2;
+      const rawDiff = ((thetaB - thetaA) % twoPi + twoPi) % twoPi;
+      const clockwise = rawDiff;
+      const counterClockwise = twoPi - rawDiff;
+
+      if (clockwise <= counterClockwise) {
+        return { distance: clockwise, direction: 1 };
+      }
+
+      return { distance: counterClockwise, direction: -1 };
+    }
+
+    function spawnParticles() {
+      const count = Number(controls.count.value) || 10;
+      const explosionSpeed = Number(controls.speed.value) || 1;
+      state.particles = new Array(count).fill(null).map(() => ({
+        theta: -Math.PI / 2 + (Math.random() - 0.5) * 0.004,
+        omega: (Math.random() - 0.5) * explosionSpeed,
+        mass: 0.5 + Math.random() * 2.5,
+        color: `hsl(${Math.random() * 360}, 80%, 65%)`,
+      }));
+    }
+
+    function computeAccelerations() {
+      const G = Number(controls.gravity.value) || 0.01;
+      const R = state.radius;
+      const particles = state.particles;
+
+      for (const p of particles) {
+        p.alpha = 0;
+      }
+
+      for (let i = 0; i < particles.length; i++) {
+        for (let j = i + 1; j < particles.length; j++) {
+          const a = particles[i];
+          const b = particles[j];
+          const { distance: deltaTheta, direction } = angularSeparation(a.theta, b.theta);
+          const arcDistance = Math.max(deltaTheta * R, 0.001);
+          const force = (G * a.mass * b.mass) / (arcDistance * arcDistance);
+          const tangentialAccelA = (force / a.mass) * direction;
+          const tangentialAccelB = (force / b.mass) * -direction;
+          a.alpha += tangentialAccelA / R;
+          b.alpha += tangentialAccelB / R;
+        }
+      }
+    }
+
+    function step(dt) {
+      const particles = state.particles;
+      computeAccelerations();
+
+      for (const p of particles) {
+        p.omega += p.alpha * dt;
+        p.theta = wrapAngle(p.theta + p.omega * dt);
+      }
+    }
+
+    function summarize(values) {
+      const min = Math.min(...values);
+      const max = Math.max(...values);
+      const avg = values.reduce((sum, v) => sum + v, 0) / values.length;
+      return { min, max, avg };
+    }
+
+    function updateStats() {
+      if (!state.particles.length) return;
+
+      const speedVals = state.particles.map((p) => Math.abs(p.omega * state.radius));
+      const accelVals = state.particles.map((p) => Math.abs((p.alpha ?? 0) * state.radius));
+      const massVals = state.particles.map((p) => p.mass);
+
+      const speed = summarize(speedVals);
+      const accel = summarize(accelVals);
+      const mass = summarize(massVals);
+
+      controls.speedStats.textContent = `${speed.avg.toFixed(3)} / ${speed.min.toFixed(3)} / ${speed.max.toFixed(3)}`;
+      controls.accelStats.textContent = `${accel.avg.toFixed(3)} / ${accel.min.toFixed(3)} / ${accel.max.toFixed(3)}`;
+      controls.massStats.textContent = `${mass.avg.toFixed(3)} / ${mass.min.toFixed(3)} / ${mass.max.toFixed(3)}`;
+    }
+
+    function draw() {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      ctx.save();
+      ctx.translate(state.center.x, state.center.y);
+
+      ctx.beginPath();
+      ctx.strokeStyle = "rgba(255, 255, 255, 0.1)";
+      ctx.lineWidth = 2;
+      ctx.arc(0, 0, state.radius, 0, Math.PI * 2);
+      ctx.stroke();
+
+      for (const p of state.particles) {
+        const x = Math.cos(p.theta) * state.radius;
+        const y = Math.sin(p.theta) * state.radius;
+
+        ctx.beginPath();
+        ctx.fillStyle = p.color;
+        ctx.shadowColor = p.color;
+        ctx.shadowBlur = 12;
+        ctx.arc(x, y, 6, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      ctx.restore();
+    }
+
+    function loop(timestamp) {
+      if (!state.lastTime) state.lastTime = timestamp;
+      const dt = ((timestamp - state.lastTime) / 1000) * (Number(controls.timescale.value) || 1);
+      state.lastTime = timestamp;
+
+      if (state.running) {
+        step(dt);
+        draw();
+        updateStats();
+      }
+
+      requestAnimationFrame(loop);
+    }
+
+    controls.restart.addEventListener("click", () => {
+      spawnParticles();
+      state.lastTime = 0;
+    });
+
+    controls.pause.addEventListener("click", () => {
+      state.running = !state.running;
+      controls.pause.textContent = state.running ? "Pause" : "Resume";
+      state.lastTime = 0;
+    });
+
+    spawnParticles();
+    requestAnimationFrame(loop);
+  </script>
+</body>
+</html>
