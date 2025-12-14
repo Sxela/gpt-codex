@@ -209,6 +209,19 @@
       return angle > Math.PI ? angle - twoPi : angle;
     }
 
+    function angularSeparation(thetaA, thetaB) {
+      const twoPi = Math.PI * 2;
+      const rawDiff = ((thetaB - thetaA) % twoPi + twoPi) % twoPi;
+      const clockwise = rawDiff;
+      const counterClockwise = twoPi - rawDiff;
+
+      if (clockwise <= counterClockwise) {
+        return { distance: clockwise, direction: 1 };
+      }
+
+      return { distance: counterClockwise, direction: -1 };
+    }
+
     function spawnParticles() {
       const count = Number(controls.count.value) || 10;
       const explosionSpeed = Number(controls.speed.value) || 1;
@@ -233,11 +246,11 @@
         for (let j = i + 1; j < particles.length; j++) {
           const a = particles[i];
           const b = particles[j];
-          const delta = wrapAngle(b.theta - a.theta);
-          const distance = Math.max(Math.abs(delta) * R, 0.001);
-          const force = (G * a.mass * b.mass) / (distance * distance);
-          const tangentialAccelA = (force / a.mass) * Math.sign(delta);
-          const tangentialAccelB = (force / b.mass) * Math.sign(delta) * -1;
+          const { distance: deltaTheta, direction } = angularSeparation(a.theta, b.theta);
+          const arcDistance = Math.max(deltaTheta * R, 0.001);
+          const force = (G * a.mass * b.mass) / (arcDistance * arcDistance);
+          const tangentialAccelA = (force / a.mass) * direction;
+          const tangentialAccelB = (force / b.mass) * -direction;
           a.alpha += tangentialAccelA / R;
           b.alpha += tangentialAccelB / R;
         }
