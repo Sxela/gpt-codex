@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Circle Big Bang</title>
+  <title>Sphere Big Bang</title>
   <style>
     :root {
       color-scheme: light dark;
@@ -15,9 +15,9 @@
       display: grid;
       grid-template-rows: auto 1fr;
       min-height: 100vh;
-      background: radial-gradient(circle at 20% 20%, rgba(255, 255, 255, 0.08), transparent 35%),
-        radial-gradient(circle at 80% 60%, rgba(255, 255, 255, 0.1), transparent 40%),
-        #0a0c10;
+      background: radial-gradient(circle at 25% 20%, rgba(255, 255, 255, 0.08), transparent 40%),
+        radial-gradient(circle at 80% 70%, rgba(255, 255, 255, 0.12), transparent 45%),
+        #05070b;
       color: #e8ecf0;
     }
 
@@ -43,7 +43,7 @@
     }
 
     header input {
-      width: 72px;
+      width: 76px;
       padding: 6px 8px;
       border-radius: 8px;
       border: 1px solid rgba(255, 255, 255, 0.2);
@@ -55,7 +55,7 @@
       padding: 8px 14px;
       border: none;
       border-radius: 10px;
-      background: linear-gradient(145deg, #4f9bff, #7ac7ff);
+      background: linear-gradient(145deg, #68b6ff, #9ad7ff);
       color: #07111c;
       font-weight: 700;
       letter-spacing: 0.02em;
@@ -66,6 +66,7 @@
 
     header button.secondary {
       background: linear-gradient(145deg, #f2f5f9, #dce3ec);
+      color: #06101b;
     }
 
     header button:hover {
@@ -88,7 +89,7 @@
       bottom: 16px;
       left: 16px;
       font-size: 13px;
-      color: rgba(232, 236, 240, 0.75);
+      color: rgba(232, 236, 240, 0.78);
     }
 
     .stats {
@@ -97,11 +98,11 @@
       right: 16px;
       padding: 12px 14px;
       border-radius: 12px;
-      background: rgba(0, 0, 0, 0.4);
+      background: rgba(0, 0, 0, 0.42);
       border: 1px solid rgba(255, 255, 255, 0.08);
       backdrop-filter: blur(6px);
       box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
-      min-width: 240px;
+      min-width: 260px;
     }
 
     .stats h3 {
@@ -135,7 +136,7 @@
   <header>
     <label>
       Particles
-      <input type="number" id="count" min="3" max="200" value="20" />
+      <input type="number" id="count" min="3" max="200" value="30" />
     </label>
     <label>
       Gravity (G)
@@ -143,7 +144,7 @@
     </label>
     <label>
       Explosion speed
-      <input type="number" id="speed" step="0.1" min="0" value="2.5" />
+      <input type="number" id="speed" step="0.1" min="0" value="3" />
     </label>
     <label>
       Time scale
@@ -191,46 +192,95 @@
       center: { x: 0, y: 0 },
       running: true,
       lastTime: 0,
+      cameraDistance: 0,
     };
 
     function resize() {
       canvas.width = window.innerWidth;
       canvas.height = window.innerHeight - document.querySelector("header").offsetHeight;
       state.center = { x: canvas.width / 2, y: canvas.height / 2 };
-      state.radius = Math.min(canvas.width, canvas.height) * 0.38;
+      state.radius = Math.min(canvas.width, canvas.height) * 0.32;
+      state.cameraDistance = state.radius * 3.4;
     }
 
     window.addEventListener("resize", resize);
     resize();
 
-    function wrapAngle(angle) {
-      const twoPi = Math.PI * 2;
-      angle = ((angle % twoPi) + twoPi) % twoPi;
-      return angle > Math.PI ? angle - twoPi : angle;
+    function clamp(v, min, max) {
+      return Math.max(min, Math.min(max, v));
     }
 
-    function angularSeparation(thetaA, thetaB) {
-      const twoPi = Math.PI * 2;
-      const rawDiff = ((thetaB - thetaA) % twoPi + twoPi) % twoPi;
-      const clockwise = rawDiff;
-      const counterClockwise = twoPi - rawDiff;
+    function normalize(v) {
+      const len = Math.hypot(v.x, v.y, v.z);
+      if (!len) return { x: 0, y: 0, z: 0 };
+      return { x: v.x / len, y: v.y / len, z: v.z / len };
+    }
 
-      if (clockwise <= counterClockwise) {
-        return { distance: clockwise, direction: 1 };
+    function subtract(a, b) {
+      return { x: a.x - b.x, y: a.y - b.y, z: a.z - b.z };
+    }
+
+    function add(a, b) {
+      return { x: a.x + b.x, y: a.y + b.y, z: a.z + b.z };
+    }
+
+    function scale(v, s) {
+      return { x: v.x * s, y: v.y * s, z: v.z * s };
+    }
+
+    function dot(a, b) {
+      return a.x * b.x + a.y * b.y + a.z * b.z;
+    }
+
+    function length(v) {
+      return Math.hypot(v.x, v.y, v.z);
+    }
+
+    function project(point) {
+      const zc = state.cameraDistance - point.z;
+      const perspective = state.cameraDistance / zc;
+      return {
+        x: state.center.x + point.x * perspective,
+        y: state.center.y - point.y * perspective,
+        scale: perspective,
+        depth: point.z,
+      };
+    }
+
+    function randomTangent(normal) {
+      const n = normalize(normal);
+      // Pick any vector not parallel to n
+      let rand = normalize({
+        x: Math.random() * 2 - 1,
+        y: Math.random() * 2 - 1,
+        z: Math.random() * 2 - 1,
+      });
+      if (Math.abs(dot(rand, n)) > 0.95) {
+        rand = { x: rand.y, y: rand.z, z: rand.x };
       }
-
-      return { distance: counterClockwise, direction: -1 };
+      const projected = subtract(rand, scale(n, dot(rand, n)));
+      return normalize(projected);
     }
 
     function spawnParticles() {
       const count = Number(controls.count.value) || 10;
       const explosionSpeed = Number(controls.speed.value) || 1;
-      state.particles = new Array(count).fill(null).map(() => ({
-        theta: -Math.PI / 2 + (Math.random() - 0.5) * 0.004,
-        omega: (Math.random() - 0.5) * explosionSpeed,
-        mass: 0.5 + Math.random() * 2.5,
-        color: `hsl(${Math.random() * 360}, 80%, 65%)`,
-      }));
+      const seedPoint = { x: 0, y: state.radius, z: 0 };
+
+      state.particles = new Array(count).fill(null).map(() => {
+        const jitter = randomTangent(seedPoint);
+        const offset = scale(jitter, Math.random() * (state.radius * 0.004));
+        const pos = add(seedPoint, offset);
+        const tangentDir = randomTangent(pos);
+        const speed = (0.5 + Math.random()) * explosionSpeed;
+        return {
+          pos: pos,
+          vel: scale(tangentDir, speed),
+          acc: { x: 0, y: 0, z: 0 },
+          mass: 0.5 + Math.random() * 2.5,
+          color: `hsl(${Math.random() * 360}, 80%, 65%)`,
+        };
+      });
     }
 
     function computeAccelerations() {
@@ -239,31 +289,48 @@
       const particles = state.particles;
 
       for (const p of particles) {
-        p.alpha = 0;
+        p.acc = { x: 0, y: 0, z: 0 };
       }
 
       for (let i = 0; i < particles.length; i++) {
         for (let j = i + 1; j < particles.length; j++) {
           const a = particles[i];
           const b = particles[j];
-          const { distance: deltaTheta, direction } = angularSeparation(a.theta, b.theta);
-          const arcDistance = Math.max(deltaTheta * R, 0.001);
+          const u = normalize(a.pos);
+          const v = normalize(b.pos);
+
+          const cosGamma = clamp(dot(u, v), -1, 1);
+          const gamma = Math.acos(cosGamma);
+          if (gamma < 1e-6) continue;
+
+          const arcDistance = Math.max(gamma * R, 0.001);
           const force = (G * a.mass * b.mass) / (arcDistance * arcDistance);
-          const tangentialAccelA = (force / a.mass) * direction;
-          const tangentialAccelB = (force / b.mass) * -direction;
-          a.alpha += tangentialAccelA / R;
-          b.alpha += tangentialAccelB / R;
+
+          const tangentA = normalize(subtract(v, scale(u, cosGamma)));
+          const tangentB = normalize(subtract(u, scale(v, cosGamma)));
+
+          const accelA = scale(tangentA, force / a.mass);
+          const accelB = scale(tangentB, force / b.mass);
+
+          a.acc = add(a.acc, accelA);
+          b.acc = add(b.acc, accelB);
         }
       }
     }
 
     function step(dt) {
-      const particles = state.particles;
       computeAccelerations();
 
-      for (const p of particles) {
-        p.omega += p.alpha * dt;
-        p.theta = wrapAngle(p.theta + p.omega * dt);
+      for (const p of state.particles) {
+        p.vel = add(p.vel, scale(p.acc, dt));
+        p.pos = add(p.pos, scale(p.vel, dt));
+
+        const normal = normalize(p.pos);
+        p.pos = scale(normal, state.radius);
+
+        // Remove any radial velocity component to keep motion on the surface
+        const radialComponent = dot(p.vel, normal);
+        p.vel = subtract(p.vel, scale(normal, radialComponent));
       }
     }
 
@@ -277,8 +344,8 @@
     function updateStats() {
       if (!state.particles.length) return;
 
-      const speedVals = state.particles.map((p) => Math.abs(p.omega * state.radius));
-      const accelVals = state.particles.map((p) => Math.abs((p.alpha ?? 0) * state.radius));
+      const speedVals = state.particles.map((p) => length(p.vel));
+      const accelVals = state.particles.map((p) => length(p.acc));
       const massVals = state.particles.map((p) => p.mass);
 
       const speed = summarize(speedVals);
@@ -290,31 +357,65 @@
       controls.massStats.textContent = `${mass.avg.toFixed(3)} / ${mass.min.toFixed(3)} / ${mass.max.toFixed(3)}`;
     }
 
-    function draw() {
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
+    function drawSphereGuide() {
+      const gradient = ctx.createRadialGradient(
+        state.center.x - state.radius * 0.35,
+        state.center.y - state.radius * 0.25,
+        state.radius * 0.15,
+        state.center.x,
+        state.center.y,
+        state.radius * 1.1
+      );
+      gradient.addColorStop(0, "rgba(120, 190, 255, 0.35)");
+      gradient.addColorStop(1, "rgba(50, 80, 110, 0.05)");
 
       ctx.save();
       ctx.translate(state.center.x, state.center.y);
-
+      ctx.fillStyle = gradient;
       ctx.beginPath();
-      ctx.strokeStyle = "rgba(255, 255, 255, 0.1)";
-      ctx.lineWidth = 2;
       ctx.arc(0, 0, state.radius, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.strokeStyle = "rgba(255, 255, 255, 0.12)";
+      ctx.lineWidth = 1;
+
+      // Equator
+      ctx.beginPath();
+      ctx.ellipse(0, 0, state.radius, state.radius * 0.35, 0, 0, Math.PI * 2);
       ctx.stroke();
 
+      // Meridians
+      for (let i = 0; i < 3; i++) {
+        const angle = (i + 1) * (Math.PI / 4);
+        ctx.beginPath();
+        ctx.ellipse(0, 0, state.radius * Math.cos(angle), state.radius, 0, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+
+      ctx.restore();
+    }
+
+    function drawParticles() {
       for (const p of state.particles) {
-        const x = Math.cos(p.theta) * state.radius;
-        const y = Math.sin(p.theta) * state.radius;
+        const projected = project(p.pos);
+        const size = 6 * projected.scale;
+        const depthShade = clamp((p.pos.z / state.radius + 1) / 2, 0, 1);
 
         ctx.beginPath();
         ctx.fillStyle = p.color;
         ctx.shadowColor = p.color;
-        ctx.shadowBlur = 12;
-        ctx.arc(x, y, 6, 0, Math.PI * 2);
+        ctx.shadowBlur = 10 * projected.scale;
+        ctx.globalAlpha = 0.65 + depthShade * 0.35;
+        ctx.arc(projected.x, projected.y, size, 0, Math.PI * 2);
         ctx.fill();
+        ctx.globalAlpha = 1;
       }
+    }
 
-      ctx.restore();
+    function draw() {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      drawSphereGuide();
+      drawParticles();
     }
 
     function loop(timestamp) {
