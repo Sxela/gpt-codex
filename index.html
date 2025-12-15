@@ -197,7 +197,7 @@
     <canvas id="sim"></canvas>
     <div class="stats" aria-live="polite">
       <h3>Stats (avg / min / max)</h3>
-      <small>Live values with mini-charts</small>
+      <small>Values update live; charts plot averages only</small>
 
       <div class="stat-block">
         <div class="stat-header">
@@ -256,9 +256,9 @@
     };
 
     const chartHistory = {
-      speed: { avg: [], min: [], max: [] },
-      accel: { avg: [], min: [], max: [] },
-      mass: { avg: [], min: [], max: [] },
+      speed: { avg: [] },
+      accel: { avg: [] },
+      mass: { avg: [] },
     };
 
     const chartContexts = {};
@@ -421,20 +421,15 @@
 
     function resetChartHistory() {
       for (const metric of Object.keys(chartHistory)) {
-        for (const field of Object.keys(chartHistory[metric])) {
-          chartHistory[metric][field].length = 0;
-        }
+        chartHistory[metric].avg.length = 0;
       }
     }
 
     function pushHistory(metric, stats) {
       const history = chartHistory[metric];
       if (!history) return;
-      for (const key of ["avg", "min", "max"]) {
-        const arr = history[key];
-        arr.push(stats[key]);
-        if (arr.length > HISTORY_LIMIT) arr.shift();
-      }
+      history.avg.push(stats.avg);
+      if (history.avg.length > HISTORY_LIMIT) history.avg.shift();
     }
 
     function drawChart(ctx, history) {
@@ -451,30 +446,23 @@
       const length = history.avg.length;
       if (!length) return;
 
-      const allVals = [...history.avg, ...history.min, ...history.max];
-      const minVal = Math.min(...allVals);
-      const maxVal = Math.max(...allVals);
+      const minVal = Math.min(...history.avg);
+      const maxVal = Math.max(...history.avg);
       const range = maxVal - minVal || 1;
       const padding = 6;
       const xStep = length > 1 ? (width - padding * 2) / (length - 1) : 0;
-      const colors = { avg: "#7ad7ff", min: "#f2c94c", max: "#f45b69" };
+      const color = "#7ad7ff";
 
-      const drawLine = (values, color) => {
-        ctx.beginPath();
-        ctx.strokeStyle = color;
-        ctx.lineWidth = 1.5;
-        values.forEach((val, idx) => {
-          const x = padding + idx * xStep;
-          const y = height - padding - ((val - minVal) / range) * (height - padding * 2);
-          if (idx === 0) ctx.moveTo(x, y);
-          else ctx.lineTo(x, y);
-        });
-        ctx.stroke();
-      };
-
-      drawLine(history.min, colors.min);
-      drawLine(history.avg, colors.avg);
-      drawLine(history.max, colors.max);
+      ctx.beginPath();
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 1.5;
+      history.avg.forEach((val, idx) => {
+        const x = padding + idx * xStep;
+        const y = height - padding - ((val - minVal) / range) * (height - padding * 2);
+        if (idx === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+      });
+      ctx.stroke();
     }
 
     function renderCharts() {
