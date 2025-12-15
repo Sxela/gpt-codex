@@ -226,8 +226,9 @@
     <div class="annotation">Drag this file into a browser tab to run locally.</div>
   </div>
 
-  <script src="https://unpkg.com/three@0.182.0/build/three.min.js"></script>
-  <script>
+  <script type="module">
+    import * as THREE from "https://unpkg.com/three@0.182.0/build/three.module.js";
+
     const canvas = document.getElementById("sim");
 
     const container = document.getElementById("canvas-container");
