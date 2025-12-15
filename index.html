@@ -102,33 +102,52 @@
       border: 1px solid rgba(255, 255, 255, 0.08);
       backdrop-filter: blur(6px);
       box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
-      min-width: 260px;
+      min-width: 280px;
+      display: grid;
+      gap: 10px;
     }
 
     .stats h3 {
-      margin: 0 0 8px;
+      margin: 0 0 2px;
       font-size: 14px;
       letter-spacing: 0.02em;
       color: #f5f8fb;
     }
 
-    .stats dl {
-      display: grid;
-      grid-template-columns: auto auto;
-      gap: 6px 10px;
+    .stats small {
+      color: #9fb3c7;
       margin: 0;
+      font-size: 12px;
     }
 
-    .stats dt {
+    .stat-block {
+      background: rgba(255, 255, 255, 0.04);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 10px;
+      padding: 8px 10px 10px;
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+    }
+
+    .stat-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 10px;
+      font-size: 13px;
       font-weight: 700;
-      color: #d8dde5;
+      color: #e1e5ea;
     }
 
-    .stats dd {
-      margin: 0;
-      text-align: right;
-      color: #c7d0da;
+    .stat-values {
       font-variant-numeric: tabular-nums;
+      color: #d3d9e2;
+    }
+
+    .stat-chart {
+      width: 100%;
+      height: 80px;
+      display: block;
+      margin-top: 8px;
     }
   </style>
 </head>
@@ -178,14 +197,31 @@
     <canvas id="sim"></canvas>
     <div class="stats" aria-live="polite">
       <h3>Stats (avg / min / max)</h3>
-      <dl>
-        <dt>Speed</dt>
-        <dd id="speed-stats">0 / 0 / 0</dd>
-        <dt>Acceleration</dt>
-        <dd id="accel-stats">0 / 0 / 0</dd>
-        <dt>Mass</dt>
-        <dd id="mass-stats">0 / 0 / 0</dd>
-      </dl>
+      <small>Live values with mini-charts</small>
+
+      <div class="stat-block">
+        <div class="stat-header">
+          <span>Speed</span>
+          <span class="stat-values" id="speed-stats">0 / 0 / 0</span>
+        </div>
+        <canvas id="speed-chart" class="stat-chart" width="240" height="80"></canvas>
+      </div>
+
+      <div class="stat-block">
+        <div class="stat-header">
+          <span>Acceleration</span>
+          <span class="stat-values" id="accel-stats">0 / 0 / 0</span>
+        </div>
+        <canvas id="accel-chart" class="stat-chart" width="240" height="80"></canvas>
+      </div>
+
+      <div class="stat-block">
+        <div class="stat-header">
+          <span>Mass</span>
+          <span class="stat-values" id="mass-stats">0 / 0 / 0</span>
+        </div>
+        <canvas id="mass-chart" class="stat-chart" width="240" height="80"></canvas>
+      </div>
     </div>
     <div class="annotation">Drag this file into a browser tab to run locally.</div>
   </div>
@@ -212,7 +248,18 @@
       speedStats: document.getElementById("speed-stats"),
       accelStats: document.getElementById("accel-stats"),
       massStats: document.getElementById("mass-stats"),
+      speedChart: document.getElementById("speed-chart"),
+      accelChart: document.getElementById("accel-chart"),
+      massChart: document.getElementById("mass-chart"),
     };
+
+    const chartHistory = {
+      speed: { avg: [], min: [], max: [] },
+      accel: { avg: [], min: [], max: [] },
+      mass: { avg: [], min: [], max: [] },
+    };
+
+    const chartContexts = {};
 
     const state = {
       particles: [],
@@ -223,12 +270,34 @@
       cameraDistance: 0,
     };
 
+    function configureCharts() {
+      const ratio = window.devicePixelRatio || 1;
+      const chartEntries = [
+        ["speed", controls.speedChart],
+        ["accel", controls.accelChart],
+        ["mass", controls.massChart],
+      ];
+
+      for (const [key, canvasEl] of chartEntries) {
+        if (!canvasEl) continue;
+        const width = canvasEl.clientWidth || canvasEl.width;
+        const height = canvasEl.clientHeight || canvasEl.height;
+        canvasEl.width = width * ratio;
+        canvasEl.height = height * ratio;
+        const ctx = canvasEl.getContext("2d");
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
+        ctx.scale(ratio, ratio);
+        chartContexts[key] = ctx;
+      }
+    }
+
     function resize() {
       canvas.width = window.innerWidth;
       canvas.height = window.innerHeight - document.querySelector("header").offsetHeight;
       state.center = { x: canvas.width / 2, y: canvas.height / 2 };
       state.radius = Math.min(canvas.width, canvas.height) * 0.32;
       state.cameraDistance = state.radius * 3.4;
+      configureCharts();
     }
 
     window.addEventListener("resize", resize);
@@ -312,6 +381,72 @@
       return Number.isFinite(val) ? val : fallback;
     }
 
+    const HISTORY_LIMIT = 240;
+
+    function resetChartHistory() {
+      for (const metric of Object.keys(chartHistory)) {
+        for (const field of Object.keys(chartHistory[metric])) {
+          chartHistory[metric][field].length = 0;
+        }
+      }
+    }
+
+    function pushHistory(metric, stats) {
+      const history = chartHistory[metric];
+      if (!history) return;
+      for (const key of ["avg", "min", "max"]) {
+        const arr = history[key];
+        arr.push(stats[key]);
+        if (arr.length > HISTORY_LIMIT) arr.shift();
+      }
+    }
+
+    function drawChart(ctx, history) {
+      if (!ctx) return;
+      const ratio = window.devicePixelRatio || 1;
+      const width = ctx.canvas.width / ratio;
+      const height = ctx.canvas.height / ratio;
+
+      ctx.save();
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+      ctx.restore();
+
+      const length = history.avg.length;
+      if (!length) return;
+
+      const allVals = [...history.avg, ...history.min, ...history.max];
+      const minVal = Math.min(...allVals);
+      const maxVal = Math.max(...allVals);
+      const range = maxVal - minVal || 1;
+      const padding = 6;
+      const xStep = length > 1 ? (width - padding * 2) / (length - 1) : 0;
+      const colors = { avg: "#7ad7ff", min: "#f2c94c", max: "#f45b69" };
+
+      const drawLine = (values, color) => {
+        ctx.beginPath();
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 1.5;
+        values.forEach((val, idx) => {
+          const x = padding + idx * xStep;
+          const y = height - padding - ((val - minVal) / range) * (height - padding * 2);
+          if (idx === 0) ctx.moveTo(x, y);
+          else ctx.lineTo(x, y);
+        });
+        ctx.stroke();
+      };
+
+      drawLine(history.min, colors.min);
+      drawLine(history.avg, colors.avg);
+      drawLine(history.max, colors.max);
+    }
+
+    function renderCharts() {
+      drawChart(chartContexts.speed, chartHistory.speed);
+      drawChart(chartContexts.accel, chartHistory.accel);
+      drawChart(chartContexts.mass, chartHistory.mass);
+    }
+
     function spawnParticles() {
       const count = readNumber(controls.count, 10);
       const explosionSpeed = readNumber(controls.speed, 1);
@@ -324,6 +459,8 @@
       const jitterMean = readNumber(controls.jitterMean, 0);
       const jitterStd = readNumber(controls.jitterStd, 0.4);
       const seedPoint = { x: 0, y: state.radius, z: 0 };
+
+      resetChartHistory();
 
       state.particles = new Array(count).fill(null).map(() => {
         const jitterDir = randomTangent(seedPoint);
@@ -423,6 +560,11 @@
       controls.speedStats.textContent = `${speed.avg.toFixed(3)} / ${speed.min.toFixed(3)} / ${speed.max.toFixed(3)}`;
       controls.accelStats.textContent = `${accel.avg.toFixed(3)} / ${accel.min.toFixed(3)} / ${accel.max.toFixed(3)}`;
       controls.massStats.textContent = `${mass.avg.toFixed(3)} / ${mass.min.toFixed(3)} / ${mass.max.toFixed(3)}`;
+
+      pushHistory("speed", speed);
+      pushHistory("accel", accel);
+      pushHistory("mass", mass);
+      renderCharts();
     }
 
     function drawSphereGuide() {

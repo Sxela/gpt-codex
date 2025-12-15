@@ -7,7 +7,8 @@
    - Drag the file onto an open browser tab.
 3. Use the controls at the top to set particle count, gravity, explosion speed, and time scale.
    - Optional distribution controls let you define mean/standard deviation for initial mass, velocity magnitude, launch direction (degrees on the tangent plane), and position jitter (percent of radius) so you can tune how random the starting state is.
-4. Watch the live stats panel for average/min/max speed, acceleration, and mass across all particles.
+4. Watch the live stats panel for average/min/max speed, acceleration, and mass across all particles, plus inline charts that
+   plot how each metric evolves over time.
 5. Press **Restart** to relaunch from the surface point or **Pause/Resume** to toggle animation.
 
 No build steps or server are required; everything runs locally in the browser.
