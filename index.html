@@ -307,17 +307,22 @@
       return mean + mag * std;
     }
 
+    function readNumber(input, fallback) {
+      const val = Number(input.value);
+      return Number.isFinite(val) ? val : fallback;
+    }
+
     function spawnParticles() {
-      const count = Number(controls.count.value) || 10;
-      const explosionSpeed = Number(controls.speed.value) || 1;
-      const massMean = Number(controls.massMean.value) || 1.75;
-      const massStd = Number(controls.massStd.value) || 0.6;
-      const speedMean = Number(controls.speedMean.value) || 1;
-      const speedStd = Number(controls.speedStd.value) || 0.35;
-      const dirMean = Number(controls.dirMean.value) || 0;
-      const dirStd = Number(controls.dirStd.value) || 360;
-      const jitterMean = Number(controls.jitterMean.value) || 0;
-      const jitterStd = Number(controls.jitterStd.value) || 0.4;
+      const count = readNumber(controls.count, 10);
+      const explosionSpeed = readNumber(controls.speed, 1);
+      const massMean = readNumber(controls.massMean, 1.75);
+      const massStd = readNumber(controls.massStd, 0.6);
+      const speedMean = readNumber(controls.speedMean, 1);
+      const speedStd = readNumber(controls.speedStd, 0.35);
+      const dirMean = readNumber(controls.dirMean, 0);
+      const dirStd = readNumber(controls.dirStd, 360);
+      const jitterMean = readNumber(controls.jitterMean, 0);
+      const jitterStd = readNumber(controls.jitterStd, 0.4);
       const seedPoint = { x: 0, y: state.radius, z: 0 };
 
       state.particles = new Array(count).fill(null).map(() => {
