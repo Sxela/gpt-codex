@@ -311,6 +311,9 @@
         wireframe: true,
       })
     );
+    // Ensure the guide sphere is never culled at large radii
+    sphereGuide.frustumCulled = false;
+    sphereGuide.material.side = THREE.DoubleSide;
     scene.add(sphereGuide);
 
     const particleGeometry = new THREE.SphereGeometry(0.08, 16, 16);
@@ -566,6 +569,12 @@
       state.cameraDistance = Math.max(state.radius * 3.4, 6);
       camera.position.set(0, 0, state.cameraDistance);
       camera.lookAt(0, 0, 0);
+      // Expand far plane to always include the entire sphere
+      const neededFar = state.cameraDistance + state.radius + 50;
+      if (camera.far !== neededFar) {
+        camera.far = neededFar;
+        camera.updateProjectionMatrix();
+      }
     }
 
     function step(dt) {
