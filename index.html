@@ -203,6 +203,12 @@
       </label>
       <div class="stat-block">
         <div class="stat-header">
+          <span>FPS</span>
+          <span class="stat-values" id="fps-stats">0.00</span>
+        </div>
+      </div>
+      <div class="stat-block">
+        <div class="stat-header">
           <span>Diameter</span>
           <span class="stat-values" id="diameter-stats">0.000</span>
         </div>
@@ -258,6 +264,7 @@
       massChart: document.getElementById("mass-chart"),
       logScale: document.getElementById("log-scale"),
       diameterStats: document.getElementById("diameter-stats"),
+      fpsStats: document.getElementById("fps-stats"),
     };
 
     const chartHistory = {
@@ -275,6 +282,8 @@
       running: true,
       lastTime: 0,
       cameraDistance: 18,
+      fps: 0,
+      prevFrameTime: 0,
     };
 
     const renderer = new THREE.WebGLRenderer({ antialias: true, canvas });
@@ -617,6 +626,17 @@
 
     function loop(timestamp) {
       if (!state.lastTime) state.lastTime = timestamp;
+      if (!state.prevFrameTime) state.prevFrameTime = timestamp;
+
+      // FPS calculation (independent of time scale)
+      const frameMs = timestamp - state.prevFrameTime;
+      state.prevFrameTime = timestamp;
+      const instantFps = frameMs > 0 ? 1000 / frameMs : 0;
+      state.fps = state.fps ? state.fps * 0.9 + instantFps * 0.1 : instantFps;
+      if (controls.fpsStats) {
+        controls.fpsStats.textContent = state.fps.toFixed(2);
+      }
+
       const dt = ((timestamp - state.lastTime) / 1000) * (Number(controls.timescale.value) || 1);
       state.lastTime = timestamp;
 
