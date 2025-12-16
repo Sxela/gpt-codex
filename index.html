@@ -663,6 +663,9 @@
       updateRadius(dt);
       computeAccelerations();
 
+      // Integrate and constrain to surface; collect speed range
+      let minS = Infinity;
+      let maxS = -Infinity;
       for (const p of state.particles) {
         p.vel = add(p.vel, scale(p.acc, dt));
         p.pos = add(p.pos, scale(p.vel, dt));
@@ -677,6 +680,25 @@
         if (p.mesh) {
           p.mesh.position.set(p.pos.x, p.pos.y, p.pos.z);
           p.mesh.scale.setScalar(state.radius * 0.06);
+        }
+
+        // Track instantaneous speed
+        const s = length(p.vel);
+        p._speed = s;
+        if (s < minS) minS = s;
+        if (s > maxS) maxS = s;
+      }
+
+      // Recolor dynamically based on instantaneous speed (blue -> yellow)
+      const rangeS = Math.max(maxS - minS, 1e-9);
+      for (const p of state.particles) {
+        const t = Math.max(0, Math.min(1, (p._speed - minS) / rangeS));
+        tmpColor.lerpColors(colorSlow, colorFast, t);
+        if (p.mesh && p.mesh.material) {
+          p.mesh.material.color.copy(tmpColor);
+          if (p.mesh.material.emissive) {
+            p.mesh.material.emissive.copy(tmpColor).multiplyScalar(0.35);
+          }
         }
       }
     }
@@ -709,22 +731,7 @@
       controls.accelStats.textContent = `${accel.avg.toFixed(3)} / ${accel.min.toFixed(3)} / ${accel.max.toFixed(3)}`;
       controls.massStats.textContent = `${mass.avg.toFixed(3)} / ${mass.min.toFixed(3)} / ${mass.max.toFixed(3)}`;
 
-      // Update particle colors based on relative speed (blue -> yellow)
-      const minS = speed.min;
-      const maxS = speed.max;
-      const rangeS = Math.max(maxS - minS, 1e-9);
-      for (let i = 0; i < state.particles.length; i++) {
-        const p = state.particles[i];
-        const sv = speedVals[i];
-        const t = Math.max(0, Math.min(1, (sv - minS) / rangeS));
-        tmpColor.lerpColors(colorSlow, colorFast, t);
-        if (p.mesh && p.mesh.material) {
-          p.mesh.material.color.copy(tmpColor);
-          if (p.mesh.material.emissive) {
-            p.mesh.material.emissive.copy(tmpColor).multiplyScalar(0.35);
-          }
-        }
-      }
+      // Note: color updates happen in step() each tick based on instantaneous speed.
 
       pushHistory("speed", speed);
       pushHistory("accel", accel);
