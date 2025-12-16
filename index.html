@@ -1,0 +1,758 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Sphere Big Bang</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+      font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+    }
+
+    body {
+      margin: 0;
+      display: grid;
+      grid-template-rows: auto 1fr;
+      min-height: 100vh;
+      background: radial-gradient(circle at 25% 20%, rgba(255, 255, 255, 0.08), transparent 40%),
+        radial-gradient(circle at 80% 70%, rgba(255, 255, 255, 0.12), transparent 45%),
+        #05070b;
+      color: #e8ecf0;
+    }
+
+    header {
+      padding: 12px 16px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      align-items: center;
+      background: rgba(0, 0, 0, 0.35);
+      backdrop-filter: blur(6px);
+      border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
+    }
+
+    header label {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 14px;
+      font-weight: 600;
+      color: #e1e5ea;
+    }
+
+    header input {
+      width: 76px;
+      padding: 6px 8px;
+      border-radius: 8px;
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      background: rgba(255, 255, 255, 0.05);
+      color: inherit;
+    }
+
+    header button {
+      padding: 8px 14px;
+      border: none;
+      border-radius: 10px;
+      background: linear-gradient(145deg, #68b6ff, #9ad7ff);
+      color: #07111c;
+      font-weight: 700;
+      letter-spacing: 0.02em;
+      cursor: pointer;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+      transition: transform 120ms ease, box-shadow 120ms ease;
+    }
+
+    header button.secondary {
+      background: linear-gradient(145deg, #f2f5f9, #dce3ec);
+      color: #06101b;
+    }
+
+    header button:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 6px 15px rgba(0, 0, 0, 0.45);
+    }
+
+    #canvas-container {
+      position: relative;
+    }
+
+    canvas {
+      display: block;
+      width: 100%;
+      height: 100%;
+    }
+
+    .annotation {
+      position: absolute;
+      bottom: 16px;
+      left: 16px;
+      font-size: 13px;
+      color: rgba(232, 236, 240, 0.78);
+    }
+
+    .stats {
+      position: absolute;
+      top: 16px;
+      right: 16px;
+      padding: 12px 14px;
+      border-radius: 12px;
+      background: rgba(0, 0, 0, 0.42);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      backdrop-filter: blur(6px);
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+      min-width: 280px;
+      display: grid;
+      gap: 10px;
+    }
+
+    .stats h3 {
+      margin: 0 0 2px;
+      font-size: 14px;
+      letter-spacing: 0.02em;
+      color: #f5f8fb;
+    }
+
+    .stats small {
+      color: #9fb3c7;
+      margin: 0;
+      font-size: 12px;
+    }
+
+    .stat-block {
+      background: rgba(255, 255, 255, 0.04);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 10px;
+      padding: 8px 10px 10px;
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+    }
+
+    .stat-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 10px;
+      font-size: 13px;
+      font-weight: 700;
+      color: #e1e5ea;
+    }
+
+    .stat-values {
+      font-variant-numeric: tabular-nums;
+      color: #d3d9e2;
+      display: inline-block;
+      min-width: 15ch;
+      text-align: right;
+    }
+
+    .chart-toggles {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      margin: 8px 0 2px;
+      font-size: 12px;
+      color: #c2c9d4;
+      user-select: none;
+    }
+
+    .stat-chart {
+      width: 100%;
+      height: 80px;
+      display: block;
+      margin-top: 8px;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <label>
+      Particles
+      <input type="number" id="count" min="3" max="600" value="60" />
+    </label>
+    <label>
+      Gravity (G)
+      <input type="number" id="gravity" step="0.001" min="0.0001" value="0.01" />
+    </label>
+    <label>
+      Expansion speed
+      <input type="number" id="speed" step="0.1" min="0" value="3" />
+    </label>
+    <label>
+      Time scale
+      <input type="number" id="timescale" step="0.1" min="0.1" value="1" />
+    </label>
+    <label>
+      Mass μ / σ
+      <input type="number" id="mass-mean" step="0.1" min="0.01" value="1.75" />
+      <input type="number" id="mass-std" step="0.1" min="0" value="0.6" />
+    </label>
+    <button id="restart">Restart</button>
+    <button id="pause" class="secondary">Pause</button>
+  </header>
+
+  <div id="canvas-container">
+    <canvas id="sim"></canvas>
+    <div class="stats" aria-live="polite">
+      <h3>Stats (avg / min / max)</h3>
+      <small>Values update live; charts plot averages only</small>
+      <label class="chart-toggles">
+        <input type="checkbox" id="log-scale" />
+        Log scale charts
+      </label>
+
+      <div class="stat-block">
+        <div class="stat-header">
+          <span>Speed</span>
+          <span class="stat-values" id="speed-stats">0 / 0 / 0</span>
+        </div>
+        <canvas id="speed-chart" class="stat-chart" width="240" height="80"></canvas>
+      </div>
+
+      <div class="stat-block">
+        <div class="stat-header">
+          <span>Acceleration</span>
+          <span class="stat-values" id="accel-stats">0 / 0 / 0</span>
+        </div>
+        <canvas id="accel-chart" class="stat-chart" width="240" height="80"></canvas>
+      </div>
+
+      <div class="stat-block">
+        <div class="stat-header">
+          <span>Mass</span>
+          <span class="stat-values" id="mass-stats">0 / 0 / 0</span>
+        </div>
+        <canvas id="mass-chart" class="stat-chart" width="240" height="80"></canvas>
+      </div>
+    </div>
+    <div class="annotation">Drag this file into a browser tab to run locally.</div>
+  </div>
+
+  <script type="module">
+    import * as THREE from "https://unpkg.com/three@0.182.0/build/three.module.js";
+
+    const canvas = document.getElementById("sim");
+
+    const container = document.getElementById("canvas-container");
+    const controls = {
+      count: document.getElementById("count"),
+      gravity: document.getElementById("gravity"),
+      speed: document.getElementById("speed"),
+      timescale: document.getElementById("timescale"),
+      massMean: document.getElementById("mass-mean"),
+      massStd: document.getElementById("mass-std"),
+      restart: document.getElementById("restart"),
+      pause: document.getElementById("pause"),
+      speedStats: document.getElementById("speed-stats"),
+      accelStats: document.getElementById("accel-stats"),
+      massStats: document.getElementById("mass-stats"),
+      speedChart: document.getElementById("speed-chart"),
+      accelChart: document.getElementById("accel-chart"),
+      massChart: document.getElementById("mass-chart"),
+      logScale: document.getElementById("log-scale"),
+    };
+
+    const chartHistory = {
+      speed: { avg: [] },
+      accel: { avg: [] },
+      mass: { avg: [] },
+    };
+
+    const chartContexts = {};
+
+    const state = {
+      count: 0,
+      pos: null,
+      vel: null,
+      acc: null,
+      mass: null,
+      instanceMesh: null,
+      radius: 0.1,
+      expansionSpeed: 3,
+      running: true,
+      lastTime: 0,
+      cameraDistance: 18,
+    };
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true, canvas });
+    renderer.shadowMap.enabled = true;
+    renderer.setPixelRatio(window.devicePixelRatio || 1);
+
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color("#05070b");
+
+    const camera = new THREE.PerspectiveCamera(55, 1, 0.1, 1000);
+    const ambient = new THREE.AmbientLight(0xffffff, 0.65);
+    const directional = new THREE.DirectionalLight(0xffffff, 1.1);
+    directional.position.set(6, 8, 6);
+    directional.castShadow = true;
+    scene.add(ambient, directional);
+
+    const sphereGuide = new THREE.Mesh(
+      new THREE.SphereGeometry(1, 64, 64),
+      new THREE.MeshStandardMaterial({
+        color: 0x23405f,
+        transparent: true,
+        opacity: 0.35,
+        roughness: 0.6,
+        metalness: 0.05,
+        wireframe: true,
+      })
+    );
+    scene.add(sphereGuide);
+
+    const particleGeometry = new THREE.SphereGeometry(0.08, 12, 12);
+
+    function configureCharts() {
+      const ratio = window.devicePixelRatio || 1;
+      const chartEntries = [
+        ["speed", controls.speedChart],
+        ["accel", controls.accelChart],
+        ["mass", controls.massChart],
+      ];
+
+      for (const [key, canvasEl] of chartEntries) {
+        if (!canvasEl) continue;
+        const width = canvasEl.clientWidth || canvasEl.width;
+        const height = canvasEl.clientHeight || canvasEl.height;
+        canvasEl.width = width * ratio;
+        canvasEl.height = height * ratio;
+        const ctx = canvasEl.getContext("2d");
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
+        ctx.scale(ratio, ratio);
+        chartContexts[key] = ctx;
+      }
+    }
+
+    function resize() {
+      const headerHeight = document.querySelector("header").offsetHeight;
+      const width = window.innerWidth;
+      const height = window.innerHeight - headerHeight;
+      renderer.setSize(width, height);
+      camera.aspect = width / Math.max(height, 1);
+      camera.updateProjectionMatrix();
+
+      updateCameraDistance();
+      sphereGuide.scale.setScalar(state.radius);
+
+      configureCharts();
+    }
+
+    window.addEventListener("resize", resize);
+    resize();
+
+    const MIN_RADIUS = 0.05;
+
+    function clamp(v, min, max) {
+      return Math.max(min, Math.min(max, v));
+    }
+
+    function normalize(v) {
+      const len = Math.hypot(v.x, v.y, v.z);
+      if (!len) return { x: 0, y: 0, z: 0 };
+      return { x: v.x / len, y: v.y / len, z: v.z / len };
+    }
+
+    function subtract(a, b) {
+      return { x: a.x - b.x, y: a.y - b.y, z: a.z - b.z };
+    }
+
+    function add(a, b) {
+      return { x: a.x + b.x, y: a.y + b.y, z: a.z + b.z };
+    }
+
+    function scale(v, s) {
+      return { x: v.x * s, y: v.y * s, z: v.z * s };
+    }
+
+    function dot(a, b) {
+      return a.x * b.x + a.y * b.y + a.z * b.z;
+    }
+
+    function cross(a, b) {
+      return {
+        x: a.y * b.z - a.z * b.y,
+        y: a.z * b.x - a.x * b.z,
+        z: a.x * b.y - a.y * b.x,
+      };
+    }
+
+    function length(v) {
+      return Math.hypot(v.x, v.y, v.z);
+    }
+
+    function randomNormal(mean, std) {
+      let u = 0;
+      let v = 0;
+      while (u === 0) u = Math.random();
+      while (v === 0) v = Math.random();
+      const mag = Math.sqrt(-2.0 * Math.log(u)) * Math.cos(2.0 * Math.PI * v);
+      return mean + mag * std;
+    }
+
+    function randomUnitVector() {
+      const z = Math.random() * 2 - 1;
+      const theta = Math.random() * Math.PI * 2;
+      const r = Math.sqrt(1 - z * z);
+      return { x: r * Math.cos(theta), y: r * Math.sin(theta), z };
+    }
+
+    function readNumber(input, fallback) {
+      const val = Number(input.value);
+      return Number.isFinite(val) ? val : fallback;
+    }
+
+    const HISTORY_LIMIT = 240;
+
+    function resetChartHistory() {
+      for (const metric of Object.keys(chartHistory)) {
+        chartHistory[metric].avg.length = 0;
+      }
+    }
+
+    function pushHistory(metric, stats) {
+      const history = chartHistory[metric];
+      if (!history) return;
+      history.avg.push(stats.avg);
+      if (history.avg.length > HISTORY_LIMIT) history.avg.shift();
+    }
+
+    function drawChart(ctx, history) {
+      if (!ctx) return;
+      const ratio = window.devicePixelRatio || 1;
+      const width = ctx.canvas.width / ratio;
+      const height = ctx.canvas.height / ratio;
+
+      const logEnabled = controls.logScale?.checked;
+      const epsilon = 1e-6;
+
+      const values = logEnabled
+        ? history.avg.map((v) => Math.log10(Math.max(v, epsilon)))
+        : history.avg;
+
+      ctx.save();
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+      ctx.restore();
+
+      const length = values.length;
+      if (!length) return;
+
+      const minVal = Math.min(...values);
+      const maxVal = Math.max(...values);
+      const range = maxVal - minVal || 1;
+      const padding = 6;
+      const xStep = length > 1 ? (width - padding * 2) / (length - 1) : 0;
+      const color = "#7ad7ff";
+
+      ctx.beginPath();
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 1.5;
+      values.forEach((val, idx) => {
+        const x = padding + idx * xStep;
+        const y = height - padding - ((val - minVal) / range) * (height - padding * 2);
+        if (idx === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+      });
+      ctx.stroke();
+    }
+
+    function renderCharts() {
+      drawChart(chartContexts.speed, chartHistory.speed);
+      drawChart(chartContexts.accel, chartHistory.accel);
+      drawChart(chartContexts.mass, chartHistory.mass);
+    }
+
+    const tempMatrix = new THREE.Matrix4();
+    const tempPosition = new THREE.Vector3();
+    const tempQuaternion = new THREE.Quaternion();
+    const tempScale = new THREE.Vector3();
+
+    function spawnParticles() {
+      const count = readNumber(controls.count, 10);
+      state.expansionSpeed = Math.max(0, readNumber(controls.speed, 1));
+      const massMean = readNumber(controls.massMean, 1.75);
+      const massStd = readNumber(controls.massStd, 0.6);
+
+      state.radius = MIN_RADIUS;
+      sphereGuide.scale.setScalar(state.radius);
+      updateCameraDistance();
+
+      resetChartHistory();
+
+      if (state.instanceMesh) {
+        scene.remove(state.instanceMesh);
+        state.instanceMesh.geometry.dispose?.();
+        state.instanceMesh.material.dispose?.();
+      }
+
+      state.count = count;
+      state.pos = new Float32Array(count * 3);
+      state.vel = new Float32Array(count * 3);
+      state.acc = new Float32Array(count * 3);
+      state.mass = new Float32Array(count);
+
+      const material = new THREE.MeshStandardMaterial({
+        color: 0xffffff,
+        emissive: 0x000000,
+        roughness: 0.2,
+        metalness: 0.05,
+        vertexColors: true,
+      });
+
+      const mesh = new THREE.InstancedMesh(particleGeometry, material, count);
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+      mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+      mesh.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(count * 3), 3);
+
+      tempQuaternion.identity();
+      tempScale.setScalar(state.radius * 0.06);
+
+      for (let i = 0; i < count; i++) {
+        const base = i * 3;
+        const dir = randomUnitVector();
+        state.pos[base] = dir.x * state.radius;
+        state.pos[base + 1] = dir.y * state.radius;
+        state.pos[base + 2] = dir.z * state.radius;
+
+        state.mass[i] = Math.max(0.05, randomNormal(massMean, massStd));
+
+        const hue = Math.random() * 360;
+        const color = new THREE.Color(`hsl(${hue}, 80%, 65%)`);
+        mesh.setColorAt(i, color);
+
+        tempPosition.set(state.pos[base], state.pos[base + 1], state.pos[base + 2]);
+        tempMatrix.compose(tempPosition, tempQuaternion, tempScale);
+        mesh.setMatrixAt(i, tempMatrix);
+      }
+
+      mesh.instanceMatrix.needsUpdate = true;
+      mesh.instanceColor?.needsUpdate = true;
+      scene.add(mesh);
+      state.instanceMesh = mesh;
+    }
+
+    function computeAccelerations() {
+      const G = Number(controls.gravity.value) || 0.01;
+      const R = state.radius;
+      const count = state.count;
+      const pos = state.pos;
+      const acc = state.acc;
+      const mass = state.mass;
+      const invR = 1 / Math.max(R, 1e-6);
+
+      acc.fill(0);
+
+      for (let i = 0; i < count; i++) {
+        const ia = i * 3;
+        const ax = pos[ia];
+        const ay = pos[ia + 1];
+        const az = pos[ia + 2];
+
+        for (let j = i + 1; j < count; j++) {
+          const ja = j * 3;
+          const bx = pos[ja];
+          const by = pos[ja + 1];
+          const bz = pos[ja + 2];
+
+          const ux = ax * invR;
+          const uy = ay * invR;
+          const uz = az * invR;
+          const vx = bx * invR;
+          const vy = by * invR;
+          const vz = bz * invR;
+
+          const cosGamma = clamp(ux * vx + uy * vy + uz * vz, -1, 1);
+          const gamma = Math.acos(cosGamma);
+          if (gamma < 1e-6) continue;
+
+          const arcDistance = Math.max(gamma * R, 0.001);
+          const invArcSq = 1 / (arcDistance * arcDistance);
+          const force = G * mass[i] * mass[j] * invArcSq;
+
+          let txA = vx - ux * cosGamma;
+          let tyA = vy - uy * cosGamma;
+          let tzA = vz - uz * cosGamma;
+          const lenA = Math.hypot(txA, tyA, tzA) || 1;
+          txA /= lenA;
+          tyA /= lenA;
+          tzA /= lenA;
+
+          let txB = ux - vx * cosGamma;
+          let tyB = uy - vy * cosGamma;
+          let tzB = uz - vz * cosGamma;
+          const lenB = Math.hypot(txB, tyB, tzB) || 1;
+          txB /= lenB;
+          tyB /= lenB;
+          tzB /= lenB;
+
+          const accelScaleA = force / mass[i];
+          const accelScaleB = force / mass[j];
+
+          acc[ia] += txA * accelScaleA;
+          acc[ia + 1] += tyA * accelScaleA;
+          acc[ia + 2] += tzA * accelScaleA;
+
+          acc[ja] += txB * accelScaleB;
+          acc[ja + 1] += tyB * accelScaleB;
+          acc[ja + 2] += tzB * accelScaleB;
+        }
+      }
+    }
+
+    function updateRadius(dt) {
+      state.radius = Math.max(MIN_RADIUS, state.radius + state.expansionSpeed * dt);
+      sphereGuide.scale.setScalar(state.radius);
+      updateCameraDistance();
+    }
+
+    function updateCameraDistance() {
+      state.cameraDistance = Math.max(state.radius * 3.4, 6);
+      camera.position.set(0, 0, state.cameraDistance);
+      camera.lookAt(0, 0, 0);
+    }
+
+    function step(dt) {
+      updateRadius(dt);
+      computeAccelerations();
+
+      const count = state.count;
+      const pos = state.pos;
+      const vel = state.vel;
+      const acc = state.acc;
+      const R = state.radius;
+
+      tempQuaternion.identity();
+      tempScale.setScalar(R * 0.06);
+
+      for (let i = 0; i < count; i++) {
+        const base = i * 3;
+        const px = pos[base];
+        const py = pos[base + 1];
+        const pz = pos[base + 2];
+
+        const vx = vel[base] + acc[base] * dt;
+        const vy = vel[base + 1] + acc[base + 1] * dt;
+        const vz = vel[base + 2] + acc[base + 2] * dt;
+
+        let nx = px + vx * dt;
+        let ny = py + vy * dt;
+        let nz = pz + vz * dt;
+
+        const len = Math.hypot(nx, ny, nz) || 1;
+        nx /= len;
+        ny /= len;
+        nz /= len;
+
+        pos[base] = nx * R;
+        pos[base + 1] = ny * R;
+        pos[base + 2] = nz * R;
+
+        const radialComponent = vx * nx + vy * ny + vz * nz;
+        vel[base] = vx - radialComponent * nx;
+        vel[base + 1] = vy - radialComponent * ny;
+        vel[base + 2] = vz - radialComponent * nz;
+
+        tempPosition.set(pos[base], pos[base + 1], pos[base + 2]);
+        tempMatrix.compose(tempPosition, tempQuaternion, tempScale);
+        state.instanceMesh?.setMatrixAt(i, tempMatrix);
+      }
+
+      if (state.instanceMesh) {
+        state.instanceMesh.instanceMatrix.needsUpdate = true;
+      }
+    }
+
+    function updateStats() {
+      const count = state.count;
+      if (!count) return;
+
+      const vel = state.vel;
+      const acc = state.acc;
+      const mass = state.mass;
+
+      let speedMin = Infinity,
+        speedMax = -Infinity,
+        speedSum = 0;
+      let accelMin = Infinity,
+        accelMax = -Infinity,
+        accelSum = 0;
+      let massMin = Infinity,
+        massMax = -Infinity,
+        massSum = 0;
+
+      for (let i = 0; i < count; i++) {
+        const base = i * 3;
+        const sx = vel[base];
+        const sy = vel[base + 1];
+        const sz = vel[base + 2];
+        const speedVal = Math.hypot(sx, sy, sz);
+        speedMin = Math.min(speedMin, speedVal);
+        speedMax = Math.max(speedMax, speedVal);
+        speedSum += speedVal;
+
+        const ax = acc[base];
+        const ay = acc[base + 1];
+        const az = acc[base + 2];
+        const accelVal = Math.hypot(ax, ay, az);
+        accelMin = Math.min(accelMin, accelVal);
+        accelMax = Math.max(accelMax, accelVal);
+        accelSum += accelVal;
+
+        const massVal = mass[i];
+        massMin = Math.min(massMin, massVal);
+        massMax = Math.max(massMax, massVal);
+        massSum += massVal;
+      }
+
+      const invCount = 1 / count;
+      const speed = { min: speedMin, max: speedMax, avg: speedSum * invCount };
+      const accelStats = { min: accelMin, max: accelMax, avg: accelSum * invCount };
+      const massStats = { min: massMin, max: massMax, avg: massSum * invCount };
+
+      controls.speedStats.textContent = `${speed.avg.toFixed(3)} / ${speed.min.toFixed(3)} / ${speed.max.toFixed(3)}`;
+      controls.accelStats.textContent = `${accelStats.avg.toFixed(3)} / ${accelStats.min.toFixed(3)} / ${accelStats.max.toFixed(3)}`;
+      controls.massStats.textContent = `${massStats.avg.toFixed(3)} / ${massStats.min.toFixed(3)} / ${massStats.max.toFixed(3)}`;
+
+      pushHistory("speed", speed);
+      pushHistory("accel", accelStats);
+      pushHistory("mass", massStats);
+      renderCharts();
+    }
+
+    function loop(timestamp) {
+      if (!state.lastTime) state.lastTime = timestamp;
+      const dt = ((timestamp - state.lastTime) / 1000) * (Number(controls.timescale.value) || 1);
+      state.lastTime = timestamp;
+
+      if (state.running) {
+        step(dt);
+        updateStats();
+      }
+
+      renderer.render(scene, camera);
+
+      requestAnimationFrame(loop);
+    }
+
+    controls.restart.addEventListener("click", () => {
+      spawnParticles();
+      state.lastTime = 0;
+    });
+
+    controls.pause.addEventListener("click", () => {
+      state.running = !state.running;
+      controls.pause.textContent = state.running ? "Pause" : "Resume";
+      state.lastTime = 0;
+    });
+
+    controls.logScale?.addEventListener("change", () => {
+      renderCharts();
+    });
+
+    spawnParticles();
+    requestAnimationFrame(loop);
+  </script>
+</body>
+</html>
