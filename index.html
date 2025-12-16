@@ -92,6 +92,15 @@
       color: rgba(232, 236, 240, 0.78);
     }
 
+    .trails-canvas {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+      mix-blend-mode: screen;
+    }
+
     .stats {
       position: absolute;
       top: 16px;
@@ -194,6 +203,7 @@
 
   <div id="canvas-container">
     <canvas id="sim"></canvas>
+    <canvas id="trails" class="trails-canvas"></canvas>
     <div class="stats" aria-live="polite">
       <h3>Stats (avg / min / max)</h3>
       <small>Values update live; charts plot averages only</small>
@@ -245,6 +255,8 @@
     import * as THREE from "https://unpkg.com/three@0.182.0/build/three.module.js";
 
     const canvas = document.getElementById("sim");
+    const trailsCanvas = document.getElementById("trails");
+    const trailsCtx = trailsCanvas.getContext("2d");
 
     const container = document.getElementById("canvas-container");
     const controls = {
@@ -317,6 +329,7 @@
     scene.add(sphereGuide);
 
     const particleGeometry = new THREE.SphereGeometry(0.08, 16, 16);
+    const tmpVec = new THREE.Vector3();
 
     function configureCharts() {
       const ratio = window.devicePixelRatio || 1;
@@ -339,6 +352,64 @@
       }
     }
 
+    function configureTrailsCanvas() {
+      if (!trailsCanvas || !trailsCtx) return;
+      const ratio = window.devicePixelRatio || 1;
+      // Match renderer size
+      const headerHeight = document.querySelector("header").offsetHeight;
+      const width = window.innerWidth;
+      const height = window.innerHeight - headerHeight;
+      trailsCanvas.width = width * ratio;
+      trailsCanvas.height = height * ratio;
+      trailsCtx.setTransform(1, 0, 0, 1, 0, 0);
+      trailsCtx.scale(ratio, ratio);
+    }
+
+    function clearTrails() {
+      if (!trailsCtx) return;
+      const ratio = window.devicePixelRatio || 1;
+      const width = trailsCanvas.width / ratio;
+      const height = trailsCanvas.height / ratio;
+      trailsCtx.save();
+      trailsCtx.setTransform(1, 0, 0, 1, 0, 0);
+      trailsCtx.clearRect(0, 0, trailsCanvas.width, trailsCanvas.height);
+      trailsCtx.restore();
+    }
+
+    function drawTrails() {
+      if (!trailsCtx || !state.particles.length) return;
+      const ratio = window.devicePixelRatio || 1;
+      const width = trailsCanvas.width / ratio;
+      const height = trailsCanvas.height / ratio;
+
+      // Fade previous trails slightly
+      trailsCtx.save();
+      trailsCtx.globalCompositeOperation = "source-over";
+      trailsCtx.fillStyle = "rgba(5, 7, 11, 0.08)";
+      trailsCtx.fillRect(0, 0, width, height);
+      trailsCtx.restore();
+
+      // Draw new points additively for a glowy trail
+      trailsCtx.save();
+      trailsCtx.globalCompositeOperation = "lighter";
+
+      // Roughly stable pixel radius
+      const rPx = Math.max(1.5, Math.min(3.5, 60 / (state.cameraDistance + 10)));
+
+      for (const p of state.particles) {
+        tmpVec.set(p.pos.x, p.pos.y, p.pos.z).project(camera);
+        const x = (tmpVec.x * 0.5 + 0.5) * width;
+        const y = (-tmpVec.y * 0.5 + 0.5) * height;
+
+        trailsCtx.fillStyle = p.mesh?.material?.color?.getStyle?.() || "#ffffff";
+        trailsCtx.beginPath();
+        trailsCtx.arc(x, y, rPx, 0, Math.PI * 2);
+        trailsCtx.fill();
+      }
+
+      trailsCtx.restore();
+    }
+
     function resize() {
       const headerHeight = document.querySelector("header").offsetHeight;
       const width = window.innerWidth;
@@ -351,6 +422,7 @@
       sphereGuide.scale.setScalar(state.radius);
 
       configureCharts();
+      configureTrailsCanvas();
     }
 
     window.addEventListener("resize", resize);
@@ -489,6 +561,7 @@
       updateCameraDistance();
 
       resetChartHistory();
+      clearTrails();
 
       for (const p of state.particles) {
         if (p.mesh) scene.remove(p.mesh);
@@ -653,6 +726,9 @@
         step(dt);
         updateStats();
       }
+
+      // Draw 2D trails overlay
+      drawTrails();
 
       renderer.render(scene, camera);
 
