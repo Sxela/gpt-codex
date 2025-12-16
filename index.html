@@ -199,6 +199,10 @@
     </label>
     <button id="restart">Restart</button>
     <button id="pause" class="secondary">Pause</button>
+    <label>
+      <input type="checkbox" id="trails-toggle" checked />
+      Trails
+    </label>
   </header>
 
   <div id="canvas-container">
@@ -268,6 +272,7 @@
       massStd: document.getElementById("mass-std"),
       restart: document.getElementById("restart"),
       pause: document.getElementById("pause"),
+      trailsToggle: document.getElementById("trails-toggle"),
       speedStats: document.getElementById("speed-stats"),
       accelStats: document.getElementById("accel-stats"),
       massStats: document.getElementById("mass-stats"),
@@ -330,6 +335,9 @@
 
     const particleGeometry = new THREE.SphereGeometry(0.08, 16, 16);
     const tmpVec = new THREE.Vector3();
+    const colorSlow = new THREE.Color("#0000ff"); // blue
+    const colorFast = new THREE.Color("#ff0000"); // yellow
+    const tmpColor = new THREE.Color();
 
     function configureCharts() {
       const ratio = window.devicePixelRatio || 1;
@@ -378,6 +386,7 @@
 
     function drawTrails() {
       if (!trailsCtx || !state.particles.length) return;
+      if (!(controls.trailsToggle?.checked)) return;
       const ratio = window.devicePixelRatio || 1;
       const width = trailsCanvas.width / ratio;
       const height = trailsCanvas.height / ratio;
@@ -700,6 +709,23 @@
       controls.accelStats.textContent = `${accel.avg.toFixed(3)} / ${accel.min.toFixed(3)} / ${accel.max.toFixed(3)}`;
       controls.massStats.textContent = `${mass.avg.toFixed(3)} / ${mass.min.toFixed(3)} / ${mass.max.toFixed(3)}`;
 
+      // Update particle colors based on relative speed (blue -> yellow)
+      const minS = speed.min;
+      const maxS = speed.max;
+      const rangeS = Math.max(maxS - minS, 1e-9);
+      for (let i = 0; i < state.particles.length; i++) {
+        const p = state.particles[i];
+        const sv = speedVals[i];
+        const t = Math.max(0, Math.min(1, (sv - minS) / rangeS));
+        tmpColor.lerpColors(colorSlow, colorFast, t);
+        if (p.mesh && p.mesh.material) {
+          p.mesh.material.color.copy(tmpColor);
+          if (p.mesh.material.emissive) {
+            p.mesh.material.emissive.copy(tmpColor).multiplyScalar(0.35);
+          }
+        }
+      }
+
       pushHistory("speed", speed);
       pushHistory("accel", accel);
       pushHistory("mass", mass);
@@ -748,6 +774,11 @@
 
     controls.logScale?.addEventListener("change", () => {
       renderCharts();
+    });
+
+    controls.trailsToggle?.addEventListener("change", () => {
+      // Clear trails immediately when toggled to avoid lingering strokes
+      clearTrails();
     });
 
     spawnParticles();
