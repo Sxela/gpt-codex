@@ -142,8 +142,9 @@
       font-variant-numeric: tabular-nums;
       color: #d3d9e2;
       display: inline-block;
-      min-width: 15ch;
+      width: 28ch;
       text-align: right;
+      font-family: ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
     }
 
     .chart-toggles {
@@ -200,6 +201,12 @@
         <input type="checkbox" id="log-scale" />
         Log scale charts
       </label>
+      <div class="stat-block">
+        <div class="stat-header">
+          <span>Diameter</span>
+          <span class="stat-values" id="diameter-stats">0.000</span>
+        </div>
+      </div>
 
       <div class="stat-block">
         <div class="stat-header">
@@ -250,6 +257,7 @@
       accelChart: document.getElementById("accel-chart"),
       massChart: document.getElementById("mass-chart"),
       logScale: document.getElementById("log-scale"),
+      diameterStats: document.getElementById("diameter-stats"),
     };
 
     const chartHistory = {
@@ -582,6 +590,12 @@
 
     function updateStats() {
       if (!state.particles.length) return;
+
+      // Update diameter (current sphere size)
+      const diameter = state.radius * 2;
+      if (controls.diameterStats) {
+        controls.diameterStats.textContent = `${diameter.toFixed(3)}`;
+      }
 
       const speedVals = state.particles.map((p) => length(p.vel));
       const accelVals = state.particles.map((p) => length(p.acc));
