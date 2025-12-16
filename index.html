@@ -527,8 +527,10 @@
         mesh.setMatrixAt(i, tempMatrix);
       }
 
-      mesh.instanceMatrix.needsUpdate = true;
-      mesh.instanceColor?.needsUpdate = true;
+        mesh.instanceMatrix.needsUpdate = true;
+        if (mesh.instanceColor) {
+          mesh.instanceColor.needsUpdate = true;
+        }
       scene.add(mesh);
       state.instanceMesh = mesh;
     }
