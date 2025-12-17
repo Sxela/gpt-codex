@@ -175,6 +175,13 @@
   </style>
 </head>
 <body>
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://unpkg.com/three@0.182.0/build/three.module.js"
+      }
+    }
+  </script>
   <header>
     <label>
       Particles
@@ -257,6 +264,7 @@
 
   <script type="module">
     import * as THREE from "https://unpkg.com/three@0.182.0/build/three.module.js";
+    import { OrbitControls } from "https://unpkg.com/three@0.182.0/examples/jsm/controls/OrbitControls.js";
 
     const canvas = document.getElementById("sim");
     const trailsCanvas = document.getElementById("trails");
@@ -311,6 +319,9 @@
     scene.background = new THREE.Color("#05070b");
 
     const camera = new THREE.PerspectiveCamera(55, 1, 0.1, 1000);
+    // Initial camera placement
+    camera.position.set(0, 0, 18);
+    camera.lookAt(0, 0, 0);
     const ambient = new THREE.AmbientLight(0xffffff, 0.65);
     const directional = new THREE.DirectionalLight(0xffffff, 1.1);
     directional.position.set(6, 8, 6);
@@ -338,6 +349,24 @@
     const colorSlow = new THREE.Color("#0000ff"); // blue
     const colorFast = new THREE.Color("#ff0000"); // yellow
     const tmpColor = new THREE.Color();
+
+    // Orbit controls for mouse/touch rotation and wheel zoom
+    const orbit = new OrbitControls(camera, renderer.domElement);
+    orbit.enableDamping = true;
+    orbit.dampingFactor = 0.08;
+    orbit.enablePan = false;
+    orbit.rotateSpeed = 0.9;
+    orbit.zoomSpeed = 1.0;
+    orbit.target.set(0, 0, 0);
+
+    // Prevent page scroll when zooming over the canvas
+    container.addEventListener(
+      "wheel",
+      (e) => {
+        e.preventDefault();
+      },
+      { passive: false }
+    );
 
     function configureCharts() {
       const ratio = window.devicePixelRatio || 1;
@@ -648,9 +677,15 @@
     }
 
     function updateCameraDistance() {
-      state.cameraDistance = Math.max(state.radius * 3.4, 6);
-      camera.position.set(0, 0, state.cameraDistance);
-      camera.lookAt(0, 0, 0);
+      // Use the current camera position (orbit-controlled) as the distance
+      state.cameraDistance = Math.hypot(camera.position.x, camera.position.y, camera.position.z);
+
+      // Keep users outside the sphere a bit
+      if (orbit) {
+        orbit.minDistance = Math.max(state.radius * 1.2, 2);
+        orbit.maxDistance = Math.max(state.radius * 50, 200);
+      }
+
       // Expand far plane to always include the entire sphere
       const neededFar = state.cameraDistance + state.radius + 50;
       if (camera.far !== neededFar) {
@@ -759,6 +794,12 @@
         step(dt);
         updateStats();
       }
+
+      // Update orbit controls (smooth damping)
+      orbit.update();
+
+      // Update camera-dependent values (distance/far plane, etc.)
+      updateCameraDistance();
 
       // Draw 2D trails overlay
       drawTrails();
