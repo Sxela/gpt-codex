@@ -185,7 +185,7 @@
   <header>
     <label>
       Particles
-      <input type="number" id="count" min="3" max="200" value="30" />
+      <input type="number" id="count" min="3" max="600" value="60" />
     </label>
     <label>
       Gravity (G)
@@ -301,7 +301,12 @@
     const chartContexts = {};
 
     const state = {
-      particles: [],
+      count: 0,
+      pos: null,
+      vel: null,
+      acc: null,
+      mass: null,
+      instanceMesh: null,
       radius: 0.1,
       expansionSpeed: 3,
       running: true,
@@ -588,6 +593,11 @@
       drawChart(chartContexts.mass, chartHistory.mass);
     }
 
+    const tempMatrix = new THREE.Matrix4();
+    const tempPosition = new THREE.Vector3();
+    const tempQuaternion = new THREE.Quaternion();
+    const tempScale = new THREE.Vector3();
+
     function spawnParticles() {
       const count = readNumber(controls.count, 10);
       state.expansionSpeed = Math.max(0, readNumber(controls.speed, 1));
@@ -601,71 +611,125 @@
       resetChartHistory();
       clearTrails();
 
-      for (const p of state.particles) {
-        if (p.mesh) scene.remove(p.mesh);
+      if (state.instanceMesh) {
+        scene.remove(state.instanceMesh);
+        state.instanceMesh.geometry.dispose?.();
+        state.instanceMesh.material.dispose?.();
       }
 
-      state.particles = new Array(count).fill(null).map(() => {
-        const pos = scale(randomUnitVector(), state.radius);
+      state.count = count;
+      state.pos = new Float32Array(count * 3);
+      state.vel = new Float32Array(count * 3);
+      state.acc = new Float32Array(count * 3);
+      state.mass = new Float32Array(count);
+
+      const material = new THREE.MeshStandardMaterial({
+        color: 0xffffff,
+        emissive: 0x000000,
+        roughness: 0.2,
+        metalness: 0.05,
+        vertexColors: true,
+      });
+
+      const mesh = new THREE.InstancedMesh(particleGeometry, material, count);
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+      mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+      mesh.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(count * 3), 3);
+
+      tempQuaternion.identity();
+      tempScale.setScalar(state.radius * 0.06);
+
+      for (let i = 0; i < count; i++) {
+        const base = i * 3;
+        const dir = randomUnitVector();
+        state.pos[base] = dir.x * state.radius;
+        state.pos[base + 1] = dir.y * state.radius;
+        state.pos[base + 2] = dir.z * state.radius;
+
+        state.mass[i] = Math.max(0.05, randomNormal(massMean, massStd));
 
         const hue = Math.random() * 360;
         const color = new THREE.Color(`hsl(${hue}, 80%, 65%)`);
-        const mesh = new THREE.Mesh(
-          particleGeometry,
-          new THREE.MeshStandardMaterial({
-            color,
-            emissive: color.clone().multiplyScalar(0.35),
-            roughness: 0.2,
-            metalness: 0.05,
-          })
-        );
-        mesh.castShadow = true;
-        mesh.receiveShadow = true;
-        mesh.scale.setScalar(state.radius * 0.06);
-        mesh.position.set(pos.x, pos.y, pos.z);
-        scene.add(mesh);
+        mesh.setColorAt(i, color);
 
-        return {
-          pos: pos,
-          vel: { x: 0, y: 0, z: 0 },
-          acc: { x: 0, y: 0, z: 0 },
-          mass: Math.max(0.05, randomNormal(massMean, massStd)),
-          mesh,
-        };
-      });
+        tempPosition.set(state.pos[base], state.pos[base + 1], state.pos[base + 2]);
+        tempMatrix.compose(tempPosition, tempQuaternion, tempScale);
+        mesh.setMatrixAt(i, tempMatrix);
+      }
+
+        mesh.instanceMatrix.needsUpdate = true;
+        if (mesh.instanceColor) {
+          mesh.instanceColor.needsUpdate = true;
+        }
+      scene.add(mesh);
+      state.instanceMesh = mesh;
     }
 
     function computeAccelerations() {
       const G = Number(controls.gravity.value) || 0.01;
       const R = state.radius;
-      const particles = state.particles;
+      const count = state.count;
+      const pos = state.pos;
+      const acc = state.acc;
+      const mass = state.mass;
+      const invR = 1 / Math.max(R, 1e-6);
 
-      for (const p of particles) {
-        p.acc = { x: 0, y: 0, z: 0 };
-      }
+      acc.fill(0);
 
-      for (let i = 0; i < particles.length; i++) {
-        for (let j = i + 1; j < particles.length; j++) {
-          const a = particles[i];
-          const b = particles[j];
-          const u = normalize(a.pos);
-          const v = normalize(b.pos);
+      for (let i = 0; i < count; i++) {
+        const ia = i * 3;
+        const ax = pos[ia];
+        const ay = pos[ia + 1];
+        const az = pos[ia + 2];
 
-          const cosGamma = clamp(dot(u, v), -1, 1);
+        for (let j = i + 1; j < count; j++) {
+          const ja = j * 3;
+          const bx = pos[ja];
+          const by = pos[ja + 1];
+          const bz = pos[ja + 2];
+
+          const ux = ax * invR;
+          const uy = ay * invR;
+          const uz = az * invR;
+          const vx = bx * invR;
+          const vy = by * invR;
+          const vz = bz * invR;
+
+          const cosGamma = clamp(ux * vx + uy * vy + uz * vz, -1, 1);
           const gamma = Math.acos(cosGamma);
           if (gamma < 1e-6) continue;
 
           const arcDistance = Math.max(gamma * R, 0.001);
-          const force = (G * a.mass * b.mass) / (arcDistance * arcDistance);
+          const invArcSq = 1 / (arcDistance * arcDistance);
+          const force = G * mass[i] * mass[j] * invArcSq;
 
-          const tangentA = normalize(subtract(v, scale(u, cosGamma)));
-          const tangentB = normalize(subtract(u, scale(v, cosGamma)));
+          let txA = vx - ux * cosGamma;
+          let tyA = vy - uy * cosGamma;
+          let tzA = vz - uz * cosGamma;
+          const lenA = Math.hypot(txA, tyA, tzA) || 1;
+          txA /= lenA;
+          tyA /= lenA;
+          tzA /= lenA;
 
-          const accelA = scale(tangentA, force / a.mass);
-          const accelB = scale(tangentB, force / b.mass);
+          let txB = ux - vx * cosGamma;
+          let tyB = uy - vy * cosGamma;
+          let tzB = uz - vz * cosGamma;
+          const lenB = Math.hypot(txB, tyB, tzB) || 1;
+          txB /= lenB;
+          tyB /= lenB;
+          tzB /= lenB;
 
-          a.acc = add(a.acc, accelA);
-          b.acc = add(b.acc, accelB);
+          const accelScaleA = force / mass[i];
+          const accelScaleB = force / mass[j];
+
+          acc[ia] += txA * accelScaleA;
+          acc[ia + 1] += tyA * accelScaleA;
+          acc[ia + 2] += tzA * accelScaleA;
+
+          acc[ja] += txB * accelScaleB;
+          acc[ja + 1] += tyB * accelScaleB;
+          acc[ja + 2] += tzB * accelScaleB;
         }
       }
     }
@@ -705,12 +769,14 @@
         p.vel = add(p.vel, scale(p.acc, dt));
         p.pos = add(p.pos, scale(p.vel, dt));
 
-        const normal = normalize(p.pos);
-        p.pos = scale(normal, state.radius);
+      tempQuaternion.identity();
+      tempScale.setScalar(R * 0.06);
 
-        // Remove any radial velocity component to keep motion on the surface
-        const radialComponent = dot(p.vel, normal);
-        p.vel = subtract(p.vel, scale(normal, radialComponent));
+      for (let i = 0; i < count; i++) {
+        const base = i * 3;
+        const px = pos[base];
+        const py = pos[base + 1];
+        const pz = pos[base + 2];
 
         if (p.mesh) {
           p.mesh.position.set(p.pos.x, p.pos.y, p.pos.z);
@@ -736,13 +802,10 @@
           }
         }
       }
-    }
 
-    function summarize(values) {
-      const min = Math.min(...values);
-      const max = Math.max(...values);
-      const avg = values.reduce((sum, v) => sum + v, 0) / values.length;
-      return { min, max, avg };
+      if (state.instanceMesh) {
+        state.instanceMesh.instanceMatrix.needsUpdate = true;
+      }
     }
 
     function updateStats() {
@@ -758,19 +821,20 @@
       const accelVals = state.particles.map((p) => length(p.acc));
       const massVals = state.particles.map((p) => p.mass);
 
-      const speed = summarize(speedVals);
-      const accel = summarize(accelVals);
-      const mass = summarize(massVals);
+      const invCount = 1 / count;
+      const speed = { min: speedMin, max: speedMax, avg: speedSum * invCount };
+      const accelStats = { min: accelMin, max: accelMax, avg: accelSum * invCount };
+      const massStats = { min: massMin, max: massMax, avg: massSum * invCount };
 
       controls.speedStats.textContent = `${speed.avg.toFixed(3)} / ${speed.min.toFixed(3)} / ${speed.max.toFixed(3)}`;
-      controls.accelStats.textContent = `${accel.avg.toFixed(3)} / ${accel.min.toFixed(3)} / ${accel.max.toFixed(3)}`;
-      controls.massStats.textContent = `${mass.avg.toFixed(3)} / ${mass.min.toFixed(3)} / ${mass.max.toFixed(3)}`;
+      controls.accelStats.textContent = `${accelStats.avg.toFixed(3)} / ${accelStats.min.toFixed(3)} / ${accelStats.max.toFixed(3)}`;
+      controls.massStats.textContent = `${massStats.avg.toFixed(3)} / ${massStats.min.toFixed(3)} / ${massStats.max.toFixed(3)}`;
 
       // Note: color updates happen in step() each tick based on instantaneous speed.
 
       pushHistory("speed", speed);
-      pushHistory("accel", accel);
-      pushHistory("mass", mass);
+      pushHistory("accel", accelStats);
+      pushHistory("mass", massStats);
       renderCharts();
     }
 
