@@ -210,6 +210,10 @@
       <input type="checkbox" id="trails-toggle" checked />
       Trails
     </label>
+    <label>
+      <input type="checkbox" id="auto-fit" />
+      Auto fit
+    </label>
   </header>
 
   <div id="canvas-container">
@@ -281,6 +285,7 @@
       restart: document.getElementById("restart"),
       pause: document.getElementById("pause"),
       trailsToggle: document.getElementById("trails-toggle"),
+      autoFit: document.getElementById("auto-fit"),
       speedStats: document.getElementById("speed-stats"),
       accelStats: document.getElementById("accel-stats"),
       massStats: document.getElementById("mass-stats"),
@@ -349,6 +354,7 @@
     const colorSlow = new THREE.Color("#0000ff"); // blue
     const colorFast = new THREE.Color("#ff0000"); // yellow
     const tmpColor = new THREE.Color();
+    const tmpDir = new THREE.Vector3();
 
     // Orbit controls for mouse/touch rotation and wheel zoom
     const orbit = new OrbitControls(camera, renderer.domElement);
@@ -694,6 +700,16 @@
       }
     }
 
+    function computeFitDistance(radius) {
+      // Ensure object of radius fits both vertically and horizontally
+      const vFov = (camera.fov * Math.PI) / 180;
+      const hFov = 2 * Math.atan(Math.tan(vFov / 2) * camera.aspect);
+      const dV = radius / Math.tan(vFov / 2);
+      const dH = radius / Math.tan(hFov / 2);
+      const margin = Math.max(radius * 0.25, 1.0);
+      return Math.max(dV, dH) + margin;
+    }
+
     function step(dt) {
       updateRadius(dt);
       computeAccelerations();
@@ -798,6 +814,15 @@
       // Update orbit controls (smooth damping)
       orbit.update();
 
+      // Auto zoom-to-fit
+      if (controls.autoFit?.checked) {
+        const targetDistance = computeFitDistance(state.radius);
+        tmpDir.copy(camera.position).sub(orbit.target);
+        if (tmpDir.lengthSq() === 0) tmpDir.set(0, 0, 1);
+        tmpDir.setLength(targetDistance);
+        camera.position.copy(orbit.target).add(tmpDir);
+      }
+
       // Update camera-dependent values (distance/far plane, etc.)
       updateCameraDistance();
 
@@ -827,6 +852,20 @@
     controls.trailsToggle?.addEventListener("change", () => {
       // Clear trails immediately when toggled to avoid lingering strokes
       clearTrails();
+    });
+
+    controls.autoFit?.addEventListener("change", () => {
+      const enabled = !!controls.autoFit.checked;
+      // Avoid fighting the user when auto-fit is on
+      orbit.enableZoom = !enabled;
+      if (enabled) {
+        // Snap immediately to a fitting distance
+        const d = computeFitDistance(state.radius);
+        tmpDir.copy(camera.position).sub(orbit.target);
+        if (tmpDir.lengthSq() === 0) tmpDir.set(0, 0, 1);
+        tmpDir.setLength(d);
+        camera.position.copy(orbit.target).add(tmpDir);
+      }
     });
 
     spawnParticles();
