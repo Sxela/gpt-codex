@@ -311,9 +311,18 @@
     const chartContexts = {};
 
     const state = {
-      particles: [],
+      // Particle buffers (SoA)
+      count: 0,
+      pos: null, // Float32Array, length = count*3
+      vel: null, // Float32Array, length = count*3
+      acc: null, // Float32Array, length = count*3
+      mass: null, // Float32Array, length = count
+      instanceMesh: null, // THREE.InstancedMesh
+
       // Scratch buffers reused per frame for perf
       _u: null, // Float32Array of normalized positions (x,y,z per particle)
+
+      // Sim/viewport
       radius: 0.1,
       expansionSpeed: 3,
       running: true,
@@ -427,7 +436,7 @@
     }
 
     function drawTrails() {
-      if (!trailsCtx || !state.particles.length) return;
+      if (!trailsCtx || state.count === 0) return;
       if (!(controls.trailsToggle?.checked)) return;
       const ratio = window.devicePixelRatio || 1;
       const width = trailsCanvas.width / ratio;
@@ -447,12 +456,14 @@
       // Roughly stable pixel radius
       const rPx = Math.max(1.5, Math.min(3.5, 60 / (state.cameraDistance + 10)));
 
-      for (const p of state.particles) {
-        tmpVec.set(p.pos.x, p.pos.y, p.pos.z).project(camera);
+      const pos = state.pos;
+      for (let i = 0; i < state.count; i++) {
+        const base = i * 3;
+        tmpVec.set(pos[base], pos[base + 1], pos[base + 2]).project(camera);
         const x = (tmpVec.x * 0.5 + 0.5) * width;
         const y = (-tmpVec.y * 0.5 + 0.5) * height;
 
-        trailsCtx.fillStyle = p.mesh?.material?.color?.getStyle?.() || "#ffffff";
+        trailsCtx.fillStyle = "#9ad7ff";
         trailsCtx.beginPath();
         trailsCtx.arc(x, y, rPx, 0, Math.PI * 2);
         trailsCtx.fill();
@@ -616,6 +627,12 @@
       return { min, max, avg: sum / values.length };
     }
 
+    // Temp objects for composing instance transforms
+    const tempMatrix = new THREE.Matrix4();
+    const tempPosition = new THREE.Vector3();
+    const tempQuaternion = new THREE.Quaternion();
+    const tempScale = new THREE.Vector3();
+
     function spawnParticles() {
       const count = readNumber(controls.count, 10);
       state.expansionSpeed = Math.max(0, readNumber(controls.speed, 1));
@@ -631,115 +648,132 @@
       resetChartHistory();
       clearTrails();
 
-      // Remove old particle meshes
-      for (const p of state.particles) {
-        if (p.mesh) scene.remove(p.mesh);
+      // Remove previous instanced mesh if present
+      if (state.instanceMesh) {
+        scene.remove(state.instanceMesh);
+        state.instanceMesh.geometry?.dispose?.();
+        state.instanceMesh.material?.dispose?.();
+        state.instanceMesh.instanceColor = null;
       }
 
-      state.particles = new Array(count).fill(null).map(() => {
-        const pos = scale(randomUnitVector(), state.radius);
+      // Allocate typed arrays
+      state.count = count;
+      state.pos = new Float32Array(count * 3);
+      state.vel = new Float32Array(count * 3);
+      state.acc = new Float32Array(count * 3);
+      state.mass = new Float32Array(count);
 
-        const hue = Math.random() * 360;
-        const baseColor = new THREE.Color(`hsl(${hue}, 80%, 65%)`);
-        const mesh = new THREE.Mesh(
-          particleGeometry,
-          new THREE.MeshStandardMaterial({
-            color: baseColor,
-            emissive: baseColor.clone().multiplyScalar(0.35),
-            roughness: 0.2,
-            metalness: 0.05,
-          })
-        );
-        mesh.castShadow = true;
-        mesh.receiveShadow = true;
-        mesh.scale.setScalar(state.radius * 0.06);
-        mesh.position.set(pos.x, pos.y, pos.z);
-        scene.add(mesh);
-
-        return {
-          pos,
-          vel: { x: 0, y: 0, z: 0 },
-          acc: { x: 0, y: 0, z: 0 },
-          mass: Math.max(0.05, randomNormal(massMean, massStd)),
-          mesh,
-          _speed: 0,
-        };
+      // Create instanced mesh
+      const material = new THREE.MeshStandardMaterial({
+        color: 0xffffff,
+        emissive: 0x000000,
+        roughness: 0.2,
+        metalness: 0.05,
+        vertexColors: true,
       });
+      const mesh = new THREE.InstancedMesh(particleGeometry, material, count);
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+      mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+      mesh.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(count * 3), 3);
+
+      // Initialize transforms and colors
+      tempQuaternion.identity();
+      tempScale.setScalar(state.radius * 0.06);
+      for (let i = 0; i < count; i++) {
+        const base = i * 3;
+        const dir = randomUnitVector();
+        state.pos[base] = dir.x * state.radius;
+        state.pos[base + 1] = dir.y * state.radius;
+        state.pos[base + 2] = dir.z * state.radius;
+        state.vel[base] = 0;
+        state.vel[base + 1] = 0;
+        state.vel[base + 2] = 0;
+        state.acc[base] = 0;
+        state.acc[base + 1] = 0;
+        state.acc[base + 2] = 0;
+        state.mass[i] = Math.max(0.05, randomNormal(massMean, massStd));
+
+        tempPosition.set(state.pos[base], state.pos[base + 1], state.pos[base + 2]);
+        tempMatrix.compose(tempPosition, tempQuaternion, tempScale);
+        mesh.setMatrixAt(i, tempMatrix);
+
+        // Initialize color (will be updated by speed every frame)
+        mesh.instanceColor.setXYZ(i, 0.5, 0.5, 1.0);
+      }
+      mesh.instanceMatrix.needsUpdate = true;
+      mesh.instanceColor.needsUpdate = true;
+
+      scene.add(mesh);
+      state.instanceMesh = mesh;
     }
 
     function computeAccelerations() {
       const G = Number(controls.gravity.value) || 0.01;
       const R = state.radius;
-      const particles = state.particles;
-      const n = particles.length;
+      const n = state.count;
       if (!n) return;
 
+      const pos = state.pos;
+      const acc = state.acc;
+      const mass = state.mass;
+
       // Reset accelerations
-      for (let i = 0; i < n; i++) {
-        const p = particles[i];
-        p.acc.x = 0;
-        p.acc.y = 0;
-        p.acc.z = 0;
-      }
+      acc.fill(0);
 
       // Prepare/reuse normalized position buffer u = pos / R
       const invR = 1 / Math.max(R, 1e-9);
       const needed = n * 3;
-      if (!state._u || state._u.length !== needed) {
-        state._u = new Float32Array(needed);
-      }
+      if (!state._u || state._u.length !== needed) state._u = new Float32Array(needed);
       const u = state._u;
       for (let i = 0; i < n; i++) {
         const base = i * 3;
-        const p = particles[i].pos;
-        u[base] = p.x * invR;
-        u[base + 1] = p.y * invR;
-        u[base + 2] = p.z * invR;
+        u[base] = pos[base] * invR;
+        u[base + 1] = pos[base + 1] * invR;
+        u[base + 2] = pos[base + 2] * invR;
       }
 
-      // Pairwise accumulation without creating temporaries
+      // Pairwise accumulation
       for (let i = 0; i < n; i++) {
         const ia = i * 3;
         const ux = u[ia], uy = u[ia + 1], uz = u[ia + 2];
-        const a = particles[i];
         for (let j = i + 1; j < n; j++) {
           const ja = j * 3;
           const vx = u[ja], vy = u[ja + 1], vz = u[ja + 2];
-          const b = particles[j];
 
           // Angle between unit vectors
           let cosGamma = ux * vx + uy * vy + uz * vz;
-          cosGamma = cosGamma < -1 ? -1 : cosGamma > 1 ? 1 : cosGamma;
+          if (cosGamma < -1) cosGamma = -1;
+          else if (cosGamma > 1) cosGamma = 1;
           const gamma = Math.acos(cosGamma);
           if (gamma < 1e-6) continue;
 
           const arcDistance = Math.max(gamma * R, 0.001);
           const invArcSq = 1 / (arcDistance * arcDistance);
-          const force = G * a.mass * b.mass * invArcSq;
+          const force = G * mass[i] * mass[j] * invArcSq;
 
-          // Tangent directions (unnormalized), then normalize quickly
-          // tA = v - u * cosGamma
+          // tA = v - u*cosGamma
           let txA = vx - ux * cosGamma;
           let tyA = vy - uy * cosGamma;
           let tzA = vz - uz * cosGamma;
-          let lenA = Math.hypot(txA, tyA, tzA);
+          const lenA = Math.hypot(txA, tyA, tzA);
           if (lenA > 1e-12) {
-            const sA = (force / a.mass) / lenA;
-            a.acc.x += txA * sA;
-            a.acc.y += tyA * sA;
-            a.acc.z += tzA * sA;
+            const sA = (force / mass[i]) / lenA;
+            acc[ia] += txA * sA;
+            acc[ia + 1] += tyA * sA;
+            acc[ia + 2] += tzA * sA;
           }
 
-          // tB = u - v * cosGamma
+          // tB = u - v*cosGamma
           let txB = ux - vx * cosGamma;
           let tyB = uy - vy * cosGamma;
           let tzB = uz - vz * cosGamma;
-          let lenB = Math.hypot(txB, tyB, tzB);
+          const lenB = Math.hypot(txB, tyB, tzB);
           if (lenB > 1e-12) {
-            const sB = (force / b.mass) / lenB;
-            b.acc.x += txB * sB;
-            b.acc.y += tyB * sB;
-            b.acc.z += tzB * sB;
+            const sB = (force / mass[j]) / lenB;
+            acc[ja] += txB * sB;
+            acc[ja + 1] += tyB * sB;
+            acc[ja + 2] += tzB * sB;
           }
         }
       }
@@ -783,48 +817,71 @@
       updateRadius(dt);
       computeAccelerations();
 
+      const n = state.count;
+      if (!n) return;
+      const pos = state.pos;
+      const vel = state.vel;
+      const acc = state.acc;
+
       // Integrate and constrain to surface; collect speed range
       let minS = Infinity;
       let maxS = -Infinity;
-      for (const p of state.particles) {
-        p.vel = add(p.vel, scale(p.acc, dt));
-        p.pos = add(p.pos, scale(p.vel, dt));
+      const R = state.radius;
+      for (let i = 0; i < n; i++) {
+        const base = i * 3;
+        // Integrate
+        vel[base] += acc[base] * dt;
+        vel[base + 1] += acc[base + 1] * dt;
+        vel[base + 2] += acc[base + 2] * dt;
+        pos[base] += vel[base] * dt;
+        pos[base + 1] += vel[base + 1] * dt;
+        pos[base + 2] += vel[base + 2] * dt;
 
-        const normal = normalize(p.pos);
-        p.pos = scale(normal, state.radius);
+        // Project onto sphere of radius R
+        const px = pos[base], py = pos[base + 1], pz = pos[base + 2];
+        const invLen = 1 / Math.max(Math.hypot(px, py, pz), 1e-9);
+        const nx = px * invLen, ny = py * invLen, nz = pz * invLen;
+        pos[base] = nx * R;
+        pos[base + 1] = ny * R;
+        pos[base + 2] = nz * R;
 
-        // Remove any radial velocity component to keep motion on the surface
-        const radialComponent = dot(p.vel, normal);
-        p.vel = subtract(p.vel, scale(normal, radialComponent));
+        // Remove radial velocity component
+        const radial = vel[base] * nx + vel[base + 1] * ny + vel[base + 2] * nz;
+        vel[base] -= nx * radial;
+        vel[base + 1] -= ny * radial;
+        vel[base + 2] -= nz * radial;
 
-        if (p.mesh) {
-          p.mesh.position.set(p.pos.x, p.pos.y, p.pos.z);
-          p.mesh.scale.setScalar(state.radius * 0.06);
-        }
-
-        // Track instantaneous speed
-        const s = length(p.vel);
-        p._speed = s;
+        // Speed
+        const s = Math.hypot(vel[base], vel[base + 1], vel[base + 2]);
         if (s < minS) minS = s;
         if (s > maxS) maxS = s;
       }
 
-      // Recolor dynamically based on instantaneous speed (blue -> yellow)
-      const rangeS = Math.max(maxS - minS, 1e-9);
-      for (const p of state.particles) {
-        const t = Math.max(0, Math.min(1, (p._speed - minS) / rangeS));
-        tmpColor.lerpColors(colorSlow, colorFast, t);
-        if (p.mesh && p.mesh.material) {
-          p.mesh.material.color.copy(tmpColor);
-          if (p.mesh.material.emissive) {
-            p.mesh.material.emissive.copy(tmpColor).multiplyScalar(0.35);
-          }
+      // Update instance transforms and colors
+      if (state.instanceMesh) {
+        const mesh = state.instanceMesh;
+        tempQuaternion.identity();
+        tempScale.setScalar(R * 0.06);
+
+        const rangeS = Math.max(maxS - minS, 1e-9);
+        for (let i = 0; i < n; i++) {
+          const base = i * 3;
+          tempPosition.set(pos[base], pos[base + 1], pos[base + 2]);
+          tempMatrix.compose(tempPosition, tempQuaternion, tempScale);
+          mesh.setMatrixAt(i, tempMatrix);
+
+          const sp = Math.hypot(vel[base], vel[base + 1], vel[base + 2]);
+          const t = Math.max(0, Math.min(1, (sp - minS) / rangeS));
+          tmpColor.lerpColors(colorSlow, colorFast, t);
+          mesh.instanceColor.setXYZ(i, tmpColor.r, tmpColor.g, tmpColor.b);
         }
+        mesh.instanceMatrix.needsUpdate = true;
+        mesh.instanceColor.needsUpdate = true;
       }
     }
 
     function updateStats() {
-      if (!state.particles.length) return;
+      if (!state.count) return;
 
       // Update diameter (current sphere size)
       const diameter = state.radius * 2;
@@ -832,23 +889,34 @@
         controls.diameterStats.textContent = `${diameter.toFixed(3)}`;
       }
 
-      const speedVals = state.particles.map((p) => length(p.vel));
-      const accelVals = state.particles.map((p) => length(p.acc));
-      const massVals = state.particles.map((p) => p.mass);
+      const n = state.count;
+      const vel = state.vel;
+      const acc = state.acc;
+      const mass = state.mass;
+
+      const speedVals = new Array(n);
+      const accelVals = new Array(n);
+      const massVals = new Array(n);
+      for (let i = 0; i < n; i++) {
+        const base = i * 3;
+        speedVals[i] = Math.hypot(vel[base], vel[base + 1], vel[base + 2]);
+        accelVals[i] = Math.hypot(acc[base], acc[base + 1], acc[base + 2]);
+        massVals[i] = mass[i];
+      }
 
       const speed = summarize(speedVals);
       const accel = summarize(accelVals);
-      const mass = summarize(massVals);
+      const massSummary = summarize(massVals);
 
       controls.speedStats.textContent = `${speed.avg.toFixed(3)} / ${speed.min.toFixed(3)} / ${speed.max.toFixed(3)}`;
       controls.accelStats.textContent = `${accel.avg.toFixed(3)} / ${accel.min.toFixed(3)} / ${accel.max.toFixed(3)}`;
-      controls.massStats.textContent = `${mass.avg.toFixed(3)} / ${mass.min.toFixed(3)} / ${mass.max.toFixed(3)}`;
+      controls.massStats.textContent = `${massSummary.avg.toFixed(3)} / ${massSummary.min.toFixed(3)} / ${massSummary.max.toFixed(3)}`;
 
       // Note: color updates happen in step() each tick based on instantaneous speed.
 
       pushHistory("speed", speed);
       pushHistory("accel", accel);
-      pushHistory("mass", mass);
+      pushHistory("mass", massSummary);
       renderCharts();
     }
 
