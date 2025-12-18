@@ -312,6 +312,8 @@
 
     const state = {
       particles: [],
+      // Scratch buffers reused per frame for perf
+      _u: null, // Float32Array of normalized positions (x,y,z per particle)
       radius: 0.1,
       expansionSpeed: 3,
       running: true,
@@ -669,33 +671,76 @@
       const G = Number(controls.gravity.value) || 0.01;
       const R = state.radius;
       const particles = state.particles;
+      const n = particles.length;
+      if (!n) return;
 
-      for (const p of particles) {
-        p.acc = { x: 0, y: 0, z: 0 };
+      // Reset accelerations
+      for (let i = 0; i < n; i++) {
+        const p = particles[i];
+        p.acc.x = 0;
+        p.acc.y = 0;
+        p.acc.z = 0;
       }
 
-      for (let i = 0; i < particles.length; i++) {
-        for (let j = i + 1; j < particles.length; j++) {
-          const a = particles[i];
-          const b = particles[j];
-          const u = normalize(a.pos);
-          const v = normalize(b.pos);
+      // Prepare/reuse normalized position buffer u = pos / R
+      const invR = 1 / Math.max(R, 1e-9);
+      const needed = n * 3;
+      if (!state._u || state._u.length !== needed) {
+        state._u = new Float32Array(needed);
+      }
+      const u = state._u;
+      for (let i = 0; i < n; i++) {
+        const base = i * 3;
+        const p = particles[i].pos;
+        u[base] = p.x * invR;
+        u[base + 1] = p.y * invR;
+        u[base + 2] = p.z * invR;
+      }
 
-          const cosGamma = clamp(dot(u, v), -1, 1);
+      // Pairwise accumulation without creating temporaries
+      for (let i = 0; i < n; i++) {
+        const ia = i * 3;
+        const ux = u[ia], uy = u[ia + 1], uz = u[ia + 2];
+        const a = particles[i];
+        for (let j = i + 1; j < n; j++) {
+          const ja = j * 3;
+          const vx = u[ja], vy = u[ja + 1], vz = u[ja + 2];
+          const b = particles[j];
+
+          // Angle between unit vectors
+          let cosGamma = ux * vx + uy * vy + uz * vz;
+          cosGamma = cosGamma < -1 ? -1 : cosGamma > 1 ? 1 : cosGamma;
           const gamma = Math.acos(cosGamma);
           if (gamma < 1e-6) continue;
 
           const arcDistance = Math.max(gamma * R, 0.001);
-          const force = (G * a.mass * b.mass) / (arcDistance * arcDistance);
+          const invArcSq = 1 / (arcDistance * arcDistance);
+          const force = G * a.mass * b.mass * invArcSq;
 
-          const tangentA = normalize(subtract(v, scale(u, cosGamma)));
-          const tangentB = normalize(subtract(u, scale(v, cosGamma)));
+          // Tangent directions (unnormalized), then normalize quickly
+          // tA = v - u * cosGamma
+          let txA = vx - ux * cosGamma;
+          let tyA = vy - uy * cosGamma;
+          let tzA = vz - uz * cosGamma;
+          let lenA = Math.hypot(txA, tyA, tzA);
+          if (lenA > 1e-12) {
+            const sA = (force / a.mass) / lenA;
+            a.acc.x += txA * sA;
+            a.acc.y += tyA * sA;
+            a.acc.z += tzA * sA;
+          }
 
-          const accelA = scale(tangentA, force / a.mass);
-          const accelB = scale(tangentB, force / b.mass);
-
-          a.acc = add(a.acc, accelA);
-          b.acc = add(b.acc, accelB);
+          // tB = u - v * cosGamma
+          let txB = ux - vx * cosGamma;
+          let tyB = uy - vy * cosGamma;
+          let tzB = uz - vz * cosGamma;
+          let lenB = Math.hypot(txB, tyB, tzB);
+          if (lenB > 1e-12) {
+            const sB = (force / b.mass) / lenB;
+            b.acc.x += txB * sB;
+            b.acc.y += tyB * sB;
+            b.acc.z += tzB * sB;
+          }
         }
       }
     }
