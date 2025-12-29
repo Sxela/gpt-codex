@@ -92,6 +92,15 @@
       color: rgba(232, 236, 240, 0.78);
     }
 
+    .trails-canvas {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+      mix-blend-mode: screen;
+    }
+
     .stats {
       position: absolute;
       top: 16px;
@@ -142,8 +151,9 @@
       font-variant-numeric: tabular-nums;
       color: #d3d9e2;
       display: inline-block;
-      min-width: 15ch;
+      width: 28ch;
       text-align: right;
+      font-family: ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
     }
 
     .chart-toggles {
@@ -165,6 +175,13 @@
   </style>
 </head>
 <body>
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://unpkg.com/three@0.182.0/build/three.module.js"
+      }
+    }
+  </script>
   <header>
     <label>
       Particles
@@ -183,16 +200,29 @@
       <input type="number" id="timescale" step="0.1" min="0.1" value="1" />
     </label>
     <label>
+      Start radius
+      <input type="number" id="start-radius" step="0.05" min="0.05" value="1.0" />
+    </label>
+    <label>
       Mass μ / σ
       <input type="number" id="mass-mean" step="0.1" min="0.01" value="1.75" />
       <input type="number" id="mass-std" step="0.1" min="0" value="0.6" />
     </label>
     <button id="restart">Restart</button>
     <button id="pause" class="secondary">Pause</button>
+    <label>
+      <input type="checkbox" id="trails-toggle" checked />
+      Trails
+    </label>
+    <label>
+      <input type="checkbox" id="auto-fit" />
+      Auto fit
+    </label>
   </header>
 
   <div id="canvas-container">
     <canvas id="sim"></canvas>
+    <canvas id="trails" class="trails-canvas"></canvas>
     <div class="stats" aria-live="polite">
       <h3>Stats (avg / min / max)</h3>
       <small>Values update live; charts plot averages only</small>
@@ -200,6 +230,18 @@
         <input type="checkbox" id="log-scale" />
         Log scale charts
       </label>
+      <div class="stat-block">
+        <div class="stat-header">
+          <span>FPS</span>
+          <span class="stat-values" id="fps-stats">0.00</span>
+        </div>
+      </div>
+      <div class="stat-block">
+        <div class="stat-header">
+          <span>Diameter</span>
+          <span class="stat-values" id="diameter-stats">0.000</span>
+        </div>
+      </div>
 
       <div class="stat-block">
         <div class="stat-header">
@@ -230,8 +272,11 @@
 
   <script type="module">
     import * as THREE from "https://unpkg.com/three@0.182.0/build/three.module.js";
+    import { OrbitControls } from "https://unpkg.com/three@0.182.0/examples/jsm/controls/OrbitControls.js";
 
     const canvas = document.getElementById("sim");
+    const trailsCanvas = document.getElementById("trails");
+    const trailsCtx = trailsCanvas.getContext("2d");
 
     const container = document.getElementById("canvas-container");
     const controls = {
@@ -241,8 +286,11 @@
       timescale: document.getElementById("timescale"),
       massMean: document.getElementById("mass-mean"),
       massStd: document.getElementById("mass-std"),
+      startRadius: document.getElementById("start-radius"),
       restart: document.getElementById("restart"),
       pause: document.getElementById("pause"),
+      trailsToggle: document.getElementById("trails-toggle"),
+      autoFit: document.getElementById("auto-fit"),
       speedStats: document.getElementById("speed-stats"),
       accelStats: document.getElementById("accel-stats"),
       massStats: document.getElementById("mass-stats"),
@@ -250,6 +298,8 @@
       accelChart: document.getElementById("accel-chart"),
       massChart: document.getElementById("mass-chart"),
       logScale: document.getElementById("log-scale"),
+      diameterStats: document.getElementById("diameter-stats"),
+      fpsStats: document.getElementById("fps-stats"),
     };
 
     const chartHistory = {
@@ -261,17 +311,25 @@
     const chartContexts = {};
 
     const state = {
+      // Particle buffers (SoA)
       count: 0,
-      pos: null,
-      vel: null,
-      acc: null,
-      mass: null,
-      instanceMesh: null,
+      pos: null, // Float32Array, length = count*3
+      vel: null, // Float32Array, length = count*3
+      acc: null, // Float32Array, length = count*3
+      mass: null, // Float32Array, length = count
+      instanceMesh: null, // THREE.InstancedMesh
+
+      // Scratch buffers reused per frame for perf
+      _u: null, // Float32Array of normalized positions (x,y,z per particle)
+
+      // Sim/viewport
       radius: 0.1,
       expansionSpeed: 3,
       running: true,
       lastTime: 0,
       cameraDistance: 18,
+      fps: 0,
+      prevFrameTime: 0,
     };
 
     const renderer = new THREE.WebGLRenderer({ antialias: true, canvas });
@@ -282,6 +340,9 @@
     scene.background = new THREE.Color("#05070b");
 
     const camera = new THREE.PerspectiveCamera(55, 1, 0.1, 1000);
+    // Initial camera placement
+    camera.position.set(0, 0, 18);
+    camera.lookAt(0, 0, 0);
     const ambient = new THREE.AmbientLight(0xffffff, 0.65);
     const directional = new THREE.DirectionalLight(0xffffff, 1.1);
     directional.position.set(6, 8, 6);
@@ -299,9 +360,35 @@
         wireframe: true,
       })
     );
+    // Ensure the guide sphere is never culled at large radii
+    sphereGuide.frustumCulled = false;
+    sphereGuide.material.side = THREE.DoubleSide;
     scene.add(sphereGuide);
 
-    const particleGeometry = new THREE.SphereGeometry(0.08, 12, 12);
+    const particleGeometry = new THREE.SphereGeometry(0.08, 16, 16);
+    const tmpVec = new THREE.Vector3();
+    const colorSlow = new THREE.Color("#1e7aff"); // blue
+    const colorFast = new THREE.Color("#ffe066"); // yellow
+    const tmpColor = new THREE.Color();
+    const tmpDir = new THREE.Vector3();
+
+    // Orbit controls for mouse/touch rotation and wheel zoom
+    const orbit = new OrbitControls(camera, renderer.domElement);
+    orbit.enableDamping = true;
+    orbit.dampingFactor = 0.08;
+    orbit.enablePan = false;
+    orbit.rotateSpeed = 0.9;
+    orbit.zoomSpeed = 1.0;
+    orbit.target.set(0, 0, 0);
+
+    // Prevent page scroll when zooming over the canvas
+    container.addEventListener(
+      "wheel",
+      (e) => {
+        e.preventDefault();
+      },
+      { passive: false }
+    );
 
     function configureCharts() {
       const ratio = window.devicePixelRatio || 1;
@@ -324,6 +411,67 @@
       }
     }
 
+    function configureTrailsCanvas() {
+      if (!trailsCanvas || !trailsCtx) return;
+      const ratio = window.devicePixelRatio || 1;
+      // Match renderer size
+      const headerHeight = document.querySelector("header").offsetHeight;
+      const width = window.innerWidth;
+      const height = window.innerHeight - headerHeight;
+      trailsCanvas.width = width * ratio;
+      trailsCanvas.height = height * ratio;
+      trailsCtx.setTransform(1, 0, 0, 1, 0, 0);
+      trailsCtx.scale(ratio, ratio);
+    }
+
+    function clearTrails() {
+      if (!trailsCtx) return;
+      const ratio = window.devicePixelRatio || 1;
+      const width = trailsCanvas.width / ratio;
+      const height = trailsCanvas.height / ratio;
+      trailsCtx.save();
+      trailsCtx.setTransform(1, 0, 0, 1, 0, 0);
+      trailsCtx.clearRect(0, 0, trailsCanvas.width, trailsCanvas.height);
+      trailsCtx.restore();
+    }
+
+    function drawTrails() {
+      if (!trailsCtx || state.count === 0) return;
+      if (!(controls.trailsToggle?.checked)) return;
+      const ratio = window.devicePixelRatio || 1;
+      const width = trailsCanvas.width / ratio;
+      const height = trailsCanvas.height / ratio;
+
+      // Fade previous trails slightly
+      trailsCtx.save();
+      trailsCtx.globalCompositeOperation = "source-over";
+      trailsCtx.fillStyle = "rgba(5, 7, 11, 0.08)";
+      trailsCtx.fillRect(0, 0, width, height);
+      trailsCtx.restore();
+
+      // Draw new points additively for a glowy trail
+      trailsCtx.save();
+      trailsCtx.globalCompositeOperation = "lighter";
+
+      // Roughly stable pixel radius
+      const rPx = Math.max(1.5, Math.min(3.5, 60 / (state.cameraDistance + 10)));
+
+      const pos = state.pos;
+      for (let i = 0; i < state.count; i++) {
+        const base = i * 3;
+        tmpVec.set(pos[base], pos[base + 1], pos[base + 2]).project(camera);
+        const x = (tmpVec.x * 0.5 + 0.5) * width;
+        const y = (-tmpVec.y * 0.5 + 0.5) * height;
+
+        trailsCtx.fillStyle = "#9ad7ff";
+        trailsCtx.beginPath();
+        trailsCtx.arc(x, y, rPx, 0, Math.PI * 2);
+        trailsCtx.fill();
+      }
+
+      trailsCtx.restore();
+    }
+
     function resize() {
       const headerHeight = document.querySelector("header").offsetHeight;
       const width = window.innerWidth;
@@ -336,6 +484,7 @@
       sphereGuide.scale.setScalar(state.radius);
 
       configureCharts();
+      configureTrailsCanvas();
     }
 
     window.addEventListener("resize", resize);
@@ -463,6 +612,22 @@
       drawChart(chartContexts.mass, chartHistory.mass);
     }
 
+    // Basic stats helper
+    function summarize(values) {
+      if (!values || values.length === 0) return { min: 0, max: 0, avg: 0 };
+      let min = Infinity;
+      let max = -Infinity;
+      let sum = 0;
+      for (let i = 0; i < values.length; i++) {
+        const v = values[i];
+        if (v < min) min = v;
+        if (v > max) max = v;
+        sum += v;
+      }
+      return { min, max, avg: sum / values.length };
+    }
+
+    // Temp objects for composing instance transforms
     const tempMatrix = new THREE.Matrix4();
     const tempPosition = new THREE.Vector3();
     const tempQuaternion = new THREE.Quaternion();
@@ -474,24 +639,31 @@
       const massMean = readNumber(controls.massMean, 1.75);
       const massStd = readNumber(controls.massStd, 0.6);
 
-      state.radius = MIN_RADIUS;
+      // Initialize sphere size from input
+      const startR = readNumber(controls.startRadius, 1.0);
+      state.radius = clamp(startR, MIN_RADIUS, Number.POSITIVE_INFINITY);
       sphereGuide.scale.setScalar(state.radius);
       updateCameraDistance();
 
       resetChartHistory();
+      clearTrails();
 
+      // Remove previous instanced mesh if present
       if (state.instanceMesh) {
         scene.remove(state.instanceMesh);
-        state.instanceMesh.geometry.dispose?.();
-        state.instanceMesh.material.dispose?.();
+        state.instanceMesh.geometry?.dispose?.();
+        state.instanceMesh.material?.dispose?.();
+        state.instanceMesh.instanceColor = null;
       }
 
+      // Allocate typed arrays
       state.count = count;
       state.pos = new Float32Array(count * 3);
       state.vel = new Float32Array(count * 3);
       state.acc = new Float32Array(count * 3);
       state.mass = new Float32Array(count);
 
+      // Create instanced mesh
       const material = new THREE.MeshStandardMaterial({
         color: 0xffffff,
         emissive: 0x000000,
@@ -499,38 +671,39 @@
         metalness: 0.05,
         vertexColors: true,
       });
-
       const mesh = new THREE.InstancedMesh(particleGeometry, material, count);
       mesh.castShadow = true;
       mesh.receiveShadow = true;
       mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
       mesh.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(count * 3), 3);
 
+      // Initialize transforms and colors
       tempQuaternion.identity();
       tempScale.setScalar(state.radius * 0.06);
-
       for (let i = 0; i < count; i++) {
         const base = i * 3;
         const dir = randomUnitVector();
         state.pos[base] = dir.x * state.radius;
         state.pos[base + 1] = dir.y * state.radius;
         state.pos[base + 2] = dir.z * state.radius;
-
+        state.vel[base] = 0;
+        state.vel[base + 1] = 0;
+        state.vel[base + 2] = 0;
+        state.acc[base] = 0;
+        state.acc[base + 1] = 0;
+        state.acc[base + 2] = 0;
         state.mass[i] = Math.max(0.05, randomNormal(massMean, massStd));
-
-        const hue = Math.random() * 360;
-        const color = new THREE.Color(`hsl(${hue}, 80%, 65%)`);
-        mesh.setColorAt(i, color);
 
         tempPosition.set(state.pos[base], state.pos[base + 1], state.pos[base + 2]);
         tempMatrix.compose(tempPosition, tempQuaternion, tempScale);
         mesh.setMatrixAt(i, tempMatrix);
-      }
 
-        mesh.instanceMatrix.needsUpdate = true;
-        if (mesh.instanceColor) {
-          mesh.instanceColor.needsUpdate = true;
-        }
+        // Initialize color (will be updated by speed every frame)
+        mesh.instanceColor.setXYZ(i, 0.5, 0.5, 1.0);
+      }
+      mesh.instanceMatrix.needsUpdate = true;
+      mesh.instanceColor.needsUpdate = true;
+
       scene.add(mesh);
       state.instanceMesh = mesh;
     }
@@ -538,34 +711,40 @@
     function computeAccelerations() {
       const G = Number(controls.gravity.value) || 0.01;
       const R = state.radius;
-      const count = state.count;
+      const n = state.count;
+      if (!n) return;
+
       const pos = state.pos;
       const acc = state.acc;
       const mass = state.mass;
-      const invR = 1 / Math.max(R, 1e-6);
 
+      // Reset accelerations
       acc.fill(0);
 
-      for (let i = 0; i < count; i++) {
+      // Prepare/reuse normalized position buffer u = pos / R
+      const invR = 1 / Math.max(R, 1e-9);
+      const needed = n * 3;
+      if (!state._u || state._u.length !== needed) state._u = new Float32Array(needed);
+      const u = state._u;
+      for (let i = 0; i < n; i++) {
+        const base = i * 3;
+        u[base] = pos[base] * invR;
+        u[base + 1] = pos[base + 1] * invR;
+        u[base + 2] = pos[base + 2] * invR;
+      }
+
+      // Pairwise accumulation
+      for (let i = 0; i < n; i++) {
         const ia = i * 3;
-        const ax = pos[ia];
-        const ay = pos[ia + 1];
-        const az = pos[ia + 2];
-
-        for (let j = i + 1; j < count; j++) {
+        const ux = u[ia], uy = u[ia + 1], uz = u[ia + 2];
+        for (let j = i + 1; j < n; j++) {
           const ja = j * 3;
-          const bx = pos[ja];
-          const by = pos[ja + 1];
-          const bz = pos[ja + 2];
+          const vx = u[ja], vy = u[ja + 1], vz = u[ja + 2];
 
-          const ux = ax * invR;
-          const uy = ay * invR;
-          const uz = az * invR;
-          const vx = bx * invR;
-          const vy = by * invR;
-          const vz = bz * invR;
-
-          const cosGamma = clamp(ux * vx + uy * vy + uz * vz, -1, 1);
+          // Angle between unit vectors
+          let cosGamma = ux * vx + uy * vy + uz * vz;
+          if (cosGamma < -1) cosGamma = -1;
+          else if (cosGamma > 1) cosGamma = 1;
           const gamma = Math.acos(cosGamma);
           if (gamma < 1e-6) continue;
 
@@ -573,32 +752,29 @@
           const invArcSq = 1 / (arcDistance * arcDistance);
           const force = G * mass[i] * mass[j] * invArcSq;
 
+          // tA = v - u*cosGamma
           let txA = vx - ux * cosGamma;
           let tyA = vy - uy * cosGamma;
           let tzA = vz - uz * cosGamma;
-          const lenA = Math.hypot(txA, tyA, tzA) || 1;
-          txA /= lenA;
-          tyA /= lenA;
-          tzA /= lenA;
+          const lenA = Math.hypot(txA, tyA, tzA);
+          if (lenA > 1e-12) {
+            const sA = (force / mass[i]) / lenA;
+            acc[ia] += txA * sA;
+            acc[ia + 1] += tyA * sA;
+            acc[ia + 2] += tzA * sA;
+          }
 
+          // tB = u - v*cosGamma
           let txB = ux - vx * cosGamma;
           let tyB = uy - vy * cosGamma;
           let tzB = uz - vz * cosGamma;
-          const lenB = Math.hypot(txB, tyB, tzB) || 1;
-          txB /= lenB;
-          tyB /= lenB;
-          tzB /= lenB;
-
-          const accelScaleA = force / mass[i];
-          const accelScaleB = force / mass[j];
-
-          acc[ia] += txA * accelScaleA;
-          acc[ia + 1] += tyA * accelScaleA;
-          acc[ia + 2] += tzA * accelScaleA;
-
-          acc[ja] += txB * accelScaleB;
-          acc[ja + 1] += tyB * accelScaleB;
-          acc[ja + 2] += tzB * accelScaleB;
+          const lenB = Math.hypot(txB, tyB, tzB);
+          if (lenB > 1e-12) {
+            const sB = (force / mass[j]) / lenB;
+            acc[ja] += txB * sB;
+            acc[ja + 1] += tyB * sB;
+            acc[ja + 2] += tzB * sB;
+          }
         }
       }
     }
@@ -610,121 +786,153 @@
     }
 
     function updateCameraDistance() {
-      state.cameraDistance = Math.max(state.radius * 3.4, 6);
-      camera.position.set(0, 0, state.cameraDistance);
-      camera.lookAt(0, 0, 0);
+      // Use the current camera position (orbit-controlled) as the distance
+      state.cameraDistance = Math.hypot(camera.position.x, camera.position.y, camera.position.z);
+
+      // Keep users outside the sphere a bit
+      if (orbit) {
+        orbit.minDistance = Math.max(state.radius * 1.2, 2);
+        orbit.maxDistance = Math.max(state.radius * 50, 200);
+      }
+
+      // Expand far plane to always include the entire sphere
+      const neededFar = state.cameraDistance + state.radius + 50;
+      if (camera.far !== neededFar) {
+        camera.far = neededFar;
+        camera.updateProjectionMatrix();
+      }
+    }
+
+    function computeFitDistance(radius) {
+      // Ensure object of radius fits both vertically and horizontally
+      const vFov = (camera.fov * Math.PI) / 180;
+      const hFov = 2 * Math.atan(Math.tan(vFov / 2) * camera.aspect);
+      const dV = radius / Math.tan(vFov / 2);
+      const dH = radius / Math.tan(hFov / 2);
+      const margin = Math.max(radius * 0.25, 1.0);
+      return Math.max(dV, dH) + margin;
     }
 
     function step(dt) {
       updateRadius(dt);
       computeAccelerations();
 
-      const count = state.count;
+      const n = state.count;
+      if (!n) return;
       const pos = state.pos;
       const vel = state.vel;
       const acc = state.acc;
+
+      // Integrate and constrain to surface; collect speed range
+      let minS = Infinity;
+      let maxS = -Infinity;
       const R = state.radius;
-
-      tempQuaternion.identity();
-      tempScale.setScalar(R * 0.06);
-
-      for (let i = 0; i < count; i++) {
+      for (let i = 0; i < n; i++) {
         const base = i * 3;
-        const px = pos[base];
-        const py = pos[base + 1];
-        const pz = pos[base + 2];
+        // Integrate
+        vel[base] += acc[base] * dt;
+        vel[base + 1] += acc[base + 1] * dt;
+        vel[base + 2] += acc[base + 2] * dt;
+        pos[base] += vel[base] * dt;
+        pos[base + 1] += vel[base + 1] * dt;
+        pos[base + 2] += vel[base + 2] * dt;
 
-        const vx = vel[base] + acc[base] * dt;
-        const vy = vel[base + 1] + acc[base + 1] * dt;
-        const vz = vel[base + 2] + acc[base + 2] * dt;
-
-        let nx = px + vx * dt;
-        let ny = py + vy * dt;
-        let nz = pz + vz * dt;
-
-        const len = Math.hypot(nx, ny, nz) || 1;
-        nx /= len;
-        ny /= len;
-        nz /= len;
-
+        // Project onto sphere of radius R
+        const px = pos[base], py = pos[base + 1], pz = pos[base + 2];
+        const invLen = 1 / Math.max(Math.hypot(px, py, pz), 1e-9);
+        const nx = px * invLen, ny = py * invLen, nz = pz * invLen;
         pos[base] = nx * R;
         pos[base + 1] = ny * R;
         pos[base + 2] = nz * R;
 
-        const radialComponent = vx * nx + vy * ny + vz * nz;
-        vel[base] = vx - radialComponent * nx;
-        vel[base + 1] = vy - radialComponent * ny;
-        vel[base + 2] = vz - radialComponent * nz;
+        // Remove radial velocity component
+        const radial = vel[base] * nx + vel[base + 1] * ny + vel[base + 2] * nz;
+        vel[base] -= nx * radial;
+        vel[base + 1] -= ny * radial;
+        vel[base + 2] -= nz * radial;
 
-        tempPosition.set(pos[base], pos[base + 1], pos[base + 2]);
-        tempMatrix.compose(tempPosition, tempQuaternion, tempScale);
-        state.instanceMesh?.setMatrixAt(i, tempMatrix);
+        // Speed
+        const s = Math.hypot(vel[base], vel[base + 1], vel[base + 2]);
+        if (s < minS) minS = s;
+        if (s > maxS) maxS = s;
       }
 
+      // Update instance transforms and colors
       if (state.instanceMesh) {
-        state.instanceMesh.instanceMatrix.needsUpdate = true;
+        const mesh = state.instanceMesh;
+        tempQuaternion.identity();
+        tempScale.setScalar(R * 0.06);
+
+        const rangeS = Math.max(maxS - minS, 1e-9);
+        for (let i = 0; i < n; i++) {
+          const base = i * 3;
+          tempPosition.set(pos[base], pos[base + 1], pos[base + 2]);
+          tempMatrix.compose(tempPosition, tempQuaternion, tempScale);
+          mesh.setMatrixAt(i, tempMatrix);
+
+          const sp = Math.hypot(vel[base], vel[base + 1], vel[base + 2]);
+          const t = Math.max(0, Math.min(1, (sp - minS) / rangeS));
+          tmpColor.lerpColors(colorSlow, colorFast, t);
+          mesh.instanceColor.setXYZ(i, tmpColor.r, tmpColor.g, tmpColor.b);
+        }
+        mesh.instanceMatrix.needsUpdate = true;
+        mesh.instanceColor.needsUpdate = true;
       }
     }
 
     function updateStats() {
-      const count = state.count;
-      if (!count) return;
+      if (!state.count) return;
 
+      // Update diameter (current sphere size)
+      const diameter = state.radius * 2;
+      if (controls.diameterStats) {
+        controls.diameterStats.textContent = `${diameter.toFixed(3)}`;
+      }
+
+      const n = state.count;
       const vel = state.vel;
       const acc = state.acc;
       const mass = state.mass;
 
-      let speedMin = Infinity,
-        speedMax = -Infinity,
-        speedSum = 0;
-      let accelMin = Infinity,
-        accelMax = -Infinity,
-        accelSum = 0;
-      let massMin = Infinity,
-        massMax = -Infinity,
-        massSum = 0;
-
-      for (let i = 0; i < count; i++) {
+      const speedVals = new Array(n);
+      const accelVals = new Array(n);
+      const massVals = new Array(n);
+      for (let i = 0; i < n; i++) {
         const base = i * 3;
-        const sx = vel[base];
-        const sy = vel[base + 1];
-        const sz = vel[base + 2];
-        const speedVal = Math.hypot(sx, sy, sz);
-        speedMin = Math.min(speedMin, speedVal);
-        speedMax = Math.max(speedMax, speedVal);
-        speedSum += speedVal;
-
-        const ax = acc[base];
-        const ay = acc[base + 1];
-        const az = acc[base + 2];
-        const accelVal = Math.hypot(ax, ay, az);
-        accelMin = Math.min(accelMin, accelVal);
-        accelMax = Math.max(accelMax, accelVal);
-        accelSum += accelVal;
-
-        const massVal = mass[i];
-        massMin = Math.min(massMin, massVal);
-        massMax = Math.max(massMax, massVal);
-        massSum += massVal;
+        speedVals[i] = Math.hypot(vel[base], vel[base + 1], vel[base + 2]);
+        accelVals[i] = Math.hypot(acc[base], acc[base + 1], acc[base + 2]);
+        massVals[i] = mass[i];
       }
 
-      const invCount = 1 / count;
-      const speed = { min: speedMin, max: speedMax, avg: speedSum * invCount };
-      const accelStats = { min: accelMin, max: accelMax, avg: accelSum * invCount };
-      const massStats = { min: massMin, max: massMax, avg: massSum * invCount };
+      const speed = summarize(speedVals);
+      const accel = summarize(accelVals);
+      const massSummary = summarize(massVals);
 
       controls.speedStats.textContent = `${speed.avg.toFixed(3)} / ${speed.min.toFixed(3)} / ${speed.max.toFixed(3)}`;
-      controls.accelStats.textContent = `${accelStats.avg.toFixed(3)} / ${accelStats.min.toFixed(3)} / ${accelStats.max.toFixed(3)}`;
-      controls.massStats.textContent = `${massStats.avg.toFixed(3)} / ${massStats.min.toFixed(3)} / ${massStats.max.toFixed(3)}`;
+      controls.accelStats.textContent = `${accel.avg.toFixed(3)} / ${accel.min.toFixed(3)} / ${accel.max.toFixed(3)}`;
+      controls.massStats.textContent = `${massSummary.avg.toFixed(3)} / ${massSummary.min.toFixed(3)} / ${massSummary.max.toFixed(3)}`;
+
+      // Note: color updates happen in step() each tick based on instantaneous speed.
 
       pushHistory("speed", speed);
-      pushHistory("accel", accelStats);
-      pushHistory("mass", massStats);
+      pushHistory("accel", accel);
+      pushHistory("mass", massSummary);
       renderCharts();
     }
 
     function loop(timestamp) {
       if (!state.lastTime) state.lastTime = timestamp;
+      if (!state.prevFrameTime) state.prevFrameTime = timestamp;
+
+      // FPS calculation (independent of time scale)
+      const frameMs = timestamp - state.prevFrameTime;
+      state.prevFrameTime = timestamp;
+      const instantFps = frameMs > 0 ? 1000 / frameMs : 0;
+      state.fps = state.fps ? state.fps * 0.9 + instantFps * 0.1 : instantFps;
+      if (controls.fpsStats) {
+        controls.fpsStats.textContent = state.fps.toFixed(2);
+      }
+
       const dt = ((timestamp - state.lastTime) / 1000) * (Number(controls.timescale.value) || 1);
       state.lastTime = timestamp;
 
@@ -732,6 +940,24 @@
         step(dt);
         updateStats();
       }
+
+      // Update orbit controls (smooth damping)
+      orbit.update();
+
+      // Auto zoom-to-fit
+      if (controls.autoFit?.checked) {
+        const targetDistance = computeFitDistance(state.radius);
+        tmpDir.copy(camera.position).sub(orbit.target);
+        if (tmpDir.lengthSq() === 0) tmpDir.set(0, 0, 1);
+        tmpDir.setLength(targetDistance);
+        camera.position.copy(orbit.target).add(tmpDir);
+      }
+
+      // Update camera-dependent values (distance/far plane, etc.)
+      updateCameraDistance();
+
+      // Draw 2D trails overlay
+      drawTrails();
 
       renderer.render(scene, camera);
 
@@ -751,6 +977,25 @@
 
     controls.logScale?.addEventListener("change", () => {
       renderCharts();
+    });
+
+    controls.trailsToggle?.addEventListener("change", () => {
+      // Clear trails immediately when toggled to avoid lingering strokes
+      clearTrails();
+    });
+
+    controls.autoFit?.addEventListener("change", () => {
+      const enabled = !!controls.autoFit.checked;
+      // Avoid fighting the user when auto-fit is on
+      orbit.enableZoom = !enabled;
+      if (enabled) {
+        // Snap immediately to a fitting distance
+        const d = computeFitDistance(state.radius);
+        tmpDir.copy(camera.position).sub(orbit.target);
+        if (tmpDir.lengthSq() === 0) tmpDir.set(0, 0, 1);
+        tmpDir.setLength(d);
+        camera.position.copy(orbit.target).add(tmpDir);
+      }
     });
 
     spawnParticles();
